@@ -15,8 +15,8 @@ def query_ollama(prompt, model="llama3.1:8b"):
     return response.json()["response"]
 
 
-def chat_with_papers(question, top_k=6):
-    results = hybrid_search(question, top_k=top_k)
+def chat_with_papers(question, top_k=6, paper_id=None):
+    results = hybrid_search(question, top_k=top_k, paper_id=paper_id)
     context = "\n\n".join(
         [f"[Excerpt {i+1}]: {text}" for i, (_, _, text, _) in enumerate(results)]
     )

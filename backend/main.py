@@ -148,6 +148,7 @@ def check_paper_integrity(
 class ChatPayload(BaseModel):
     question: str
     session_id: Optional[int] = None
+    paper_id: Optional[int] = None
 
 
 @app.get("/api/history")
@@ -270,8 +271,8 @@ def chat_audit(payload: ChatPayload, current_user: dict = Depends(get_current_us
     user_msg_id = cursor.fetchone()[0]
     conn.commit()
 
-    # Execute hybrid search
-    raw_results = hybrid_search(question, top_k=5)
+    # Execute hybrid search with strict paper scoping if supplied
+    raw_results = hybrid_search(question, top_k=5, paper_id=payload.paper_id)
 
     # Fetch citation metadata
     citations = []
@@ -344,8 +345,8 @@ Answer clearly and concisely, referencing specific findings, numbers, or papers 
 
 # Backwards-compatible GET /chat endpoint
 @app.get("/chat")
-def chat(question: str):
-    result = chat_with_papers(question)
+def chat(question: str, paper_id: Optional[int] = Query(None)):
+    result = chat_with_papers(question, paper_id=paper_id)
     return {
         "question": question,
         "answer": result["answer"],
