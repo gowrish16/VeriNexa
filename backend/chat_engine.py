@@ -2,20 +2,26 @@ import requests
 from hybrid_search import hybrid_search
 
 
-def query_ollama(prompt, model="llama3.1:8b"):
+def query_ollama(prompt, model="llama3.1:8b", stream=False):
     response = requests.post(
         "http://localhost:11434/api/generate",
         json={
             "model": model,
             "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.2}
-        }
+            "stream": stream,
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 300
+            }
+        },
+        stream=stream
     )
+    if stream:
+        return response
     return response.json()["response"]
 
 
-def chat_with_papers(question, top_k=6, paper_id=None):
+def chat_with_papers(question, top_k=3, paper_id=None):
     results = hybrid_search(question, top_k=top_k, paper_id=paper_id)
     context = "\n\n".join(
         [f"[Excerpt {i+1}]: {text}" for i, (_, _, text, _) in enumerate(results)]

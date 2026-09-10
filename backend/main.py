@@ -1,11 +1,13 @@
 import os
 import shutil
 import json
+import requests
 from typing import Optional, List
 from dotenv import load_dotenv
 import psycopg2
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -271,8 +273,8 @@ def chat_audit(payload: ChatPayload, current_user: dict = Depends(get_current_us
     user_msg_id = cursor.fetchone()[0]
     conn.commit()
 
-    # Execute hybrid search with strict paper scoping if supplied
-    raw_results = hybrid_search(question, top_k=5, paper_id=payload.paper_id)
+    # Execute hybrid search with top_k=3 to reduce token context overhead
+    raw_results = hybrid_search(question, top_k=3, paper_id=payload.paper_id)
 
     # Fetch citation metadata
     citations = []
@@ -341,6 +343,143 @@ Answer clearly and concisely, referencing specific findings, numbers, or papers 
         "sources_used": len(citations),
         "citations": citations
     }
+
+
+@app.post("/api/chat/stream")
+def chat_audit_stream(payload: ChatPayload, current_user: dict = Depends(get_current_user)):
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    session_id = payload.session_id
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if session_id:
+        cursor.execute(
+            "SELECT id, title FROM audit_sessions WHERE id = %s AND user_id = %s;",
+            (session_id, current_user["id"])
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            session_id = None
+
+    if not session_id:
+        session_title = question[:50] + ("..." if len(question) > 50 else "")
+        cursor.execute(
+            "INSERT INTO audit_sessions (user_id, title) VALUES (%s, %s) RETURNING id;",
+            (current_user["id"], session_title)
+        )
+        session_id = cursor.fetchone()[0]
+
+    # Save user message
+    cursor.execute(
+        "INSERT INTO audit_messages (session_id, role, content, citations_json) VALUES (%s, 'user', %s, '[]') RETURNING id;",
+        (session_id, question)
+    )
+    conn.commit()
+
+    # Reduced top_k = 3 context overhead
+    raw_results = hybrid_search(question, top_k=3, paper_id=payload.paper_id)
+
+    citations = []
+    for cid, c_index, c_text, score in raw_results:
+        cursor.execute(
+            """
+            SELECT c.id, c.paper_id, c.chunk_index, c.chunk_text, p.title, p.filename
+            FROM chunks c
+            JOIN papers p ON c.paper_id = p.id
+            WHERE c.id = %s;
+            """,
+            (cid,)
+        )
+        p_row = cursor.fetchone()
+        if p_row:
+            citations.append({
+                "chunk_id": p_row[0],
+                "paper_id": p_row[1],
+                "chunk_index": p_row[2],
+                "snippet": p_row[3][:280] + ("..." if len(p_row[3]) > 280 else ""),
+                "full_text": p_row[3],
+                "title": p_row[4],
+                "filename": p_row[5],
+                "score": round(float(score), 4)
+            })
+
+    cursor.close()
+    conn.close()
+
+    context_blocks = [
+        f"[Excerpt {i+1} | Source: {c['title']} | File: {c['filename']}]:\n{c['full_text']}"
+        for i, c in enumerate(citations)
+    ]
+    context_str = "\n\n".join(context_blocks)
+
+    prompt = f"""You are a biomedical research assistant answering questions about a set of uploaded biomedical papers.
+
+Use ONLY the excerpts below to answer the question. If the excerpts don't contain enough information to answer, say so honestly rather than guessing.
+
+--- Excerpts from uploaded papers ---
+{context_str}
+
+--- Question ---
+{question}
+
+Answer clearly and concisely, referencing specific findings, numbers, or papers where relevant.
+"""
+
+    def generate_tokens():
+        try:
+            res = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "llama3.1:8b",
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_predict": 300
+                    }
+                },
+                stream=True
+            )
+
+            full_answer = ""
+            for line in res.iter_lines():
+                if line:
+                    chunk = json.loads(line.decode("utf-8"))
+                    token = chunk.get("response", "")
+                    full_answer += token
+                    event_data = json.dumps({"token": token, "done": False})
+                    yield f"data: {event_data}\n\n"
+
+            # Save assistant message upon completion
+            db_conn = get_connection()
+            db_cursor = db_conn.cursor()
+            db_cursor.execute(
+                """
+                INSERT INTO audit_messages (session_id, role, content, citations_json)
+                VALUES (%s, 'assistant', %s, %s);
+                """,
+                (session_id, full_answer, json.dumps(citations))
+            )
+            db_conn.commit()
+            db_cursor.close()
+            db_conn.close()
+
+            done_event = json.dumps({
+                "token": "",
+                "done": True,
+                "session_id": session_id,
+                "citations": citations,
+                "sources_used": len(citations)
+            })
+            yield f"data: {done_event}\n\n"
+        except Exception as e:
+            err_event = json.dumps({"error": str(e), "done": True})
+            yield f"data: {err_event}\n\n"
+
+    return StreamingResponse(generate_tokens(), media_type="text/event-stream")
 
 
 # Backwards-compatible GET /chat endpoint

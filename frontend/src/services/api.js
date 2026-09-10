@@ -81,7 +81,7 @@ export async function checkIntegrity(paperId, topicQuery) {
 }
 
 // 5. POST /api/chat
-export async function chatAudit(question, sessionId = null) {
+export async function chatAudit(question, sessionId = null, paperId = null) {
   const res = await fetch(`${API_BASE_URL}/api/chat`, {
     method: "POST",
     headers: {
@@ -91,6 +91,7 @@ export async function chatAudit(question, sessionId = null) {
     body: JSON.stringify({
       question,
       session_id: sessionId || null,
+      paper_id: paperId || null,
     }),
   });
 
@@ -99,6 +100,61 @@ export async function chatAudit(question, sessionId = null) {
     throw new Error(data.detail || "RAG chat query failed");
   }
   return data;
+}
+
+// 5b. POST /api/chat/stream (SSE Streaming)
+export async function chatAuditStream(question, sessionId = null, paperId = null, onToken = null, onComplete = null, onError = null) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({
+        question,
+        session_id: sessionId || null,
+        paper_id: paperId || null,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.detail || "Streaming RAG query failed");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.token && onToken) {
+              onToken(data.token);
+            }
+            if (data.done && onComplete) {
+              onComplete(data);
+            }
+          } catch (e) {
+            console.error("SSE parse error:", e);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (onError) onError(err);
+    else throw err;
+  }
 }
 
 // 6. GET /api/history
