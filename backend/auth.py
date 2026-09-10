@@ -5,8 +5,8 @@ import bcrypt
 import jwt
 import psycopg2
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 load_dotenv()
@@ -17,6 +17,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+http_bearer = HTTPBearer(auto_error=False)
 
 
 def get_connection():
@@ -90,7 +91,11 @@ def get_user_by_id(user_id: int):
     return None
 
 
-async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> dict:
+async def get_current_user(
+    token_bearer: Optional[str] = Depends(oauth2_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
+) -> dict:
+    token = token_bearer or (credentials.credentials if credentials else None)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate authentication credentials",
@@ -114,7 +119,11 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> dic
     return user
 
 
-async def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)) -> Optional[dict]:
+async def get_optional_user(
+    token_bearer: Optional[str] = Depends(oauth2_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
+) -> Optional[dict]:
+    token = token_bearer or (credentials.credentials if credentials else None)
     if not token:
         return None
     try:
@@ -182,16 +191,38 @@ def register(req: RegisterRequest):
 
 
 @router.post("/login")
-def login(req: LoginRequest):
-    clean_email = req.email.strip().lower()
-    user = get_user_by_email(clean_email)
+async def login(request: Request):
+    content_type = request.headers.get("content-type", "")
+    email = None
+    password = None
+
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        email = (form.get("username") or form.get("email") or "").strip().lower()
+        password = form.get("password")
+    else:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                email = (body.get("email") or body.get("username") or "").strip().lower()
+                password = body.get("password")
+        except Exception:
+            pass
+
+    if not email or not password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
+
+    user = get_user_by_email(email)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
 
-    if not verify_password(req.password, user["hashed_password"]):
+    if not verify_password(password, user["hashed_password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
