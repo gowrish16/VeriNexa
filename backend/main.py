@@ -26,7 +26,11 @@ try:
 except Exception as e:
     print(f"[Warning] DB initialization error: {e}")
 
-app = FastAPI(title="VeriLit Biomedical Audit API")
+app = FastAPI(
+    title="VeriNexa Biomedical Audit API",
+    description="Cross-Document Contradiction Detection and Integrity Verification System for Clinical Literature",
+    version="1.0.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,7 +102,7 @@ def upload_paper(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "status": "rejected",
-                "message": "This document does not appear to be a biomedical research paper. VeriLit only accepts biomedical or medical research papers, such as clinical studies, systematic reviews, or meta-analyses.",
+                "message": "This document does not appear to be a biomedical research paper. VeriNexa only accepts biomedical or medical research papers, such as clinical studies, systematic reviews, or meta-analyses.",
                 "details": ingestion_result.get("reason", "Non-biomedical content detected")
             }
         )
@@ -119,7 +123,8 @@ def compare_papers(query: str, current_user: Optional[dict] = Depends(get_option
     return {
         "query": query,
         "verdict": result["verdict"],
-        "saved_id": result.get("saved_id")
+        "saved_id": result.get("saved_id"),
+        "user_id": current_user["id"] if current_user else None
     }
 
 
@@ -134,7 +139,8 @@ def check_paper_integrity(
         "paper_id": paper_id,
         "topic_query": topic_query,
         "verdict": result["verdict"],
-        "saved_id": result.get("saved_id")
+        "saved_id": result.get("saved_id"),
+        "user_id": current_user["id"] if current_user else None
     }
 
 
