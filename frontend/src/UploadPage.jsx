@@ -189,6 +189,33 @@ export default function UploadPage({ onContinue, onBack, onOpenAuth }) {
           </p>
         </div>
 
+        {/* Navigation & Empty State Bar */}
+        {existingPapers.length > 0 ? (
+          <div className="w-full max-w-2xl mb-6 flex items-center justify-between p-4 rounded-xl bg-[#0b1e25] border border-[#2dd4ce]/40 shadow-xl">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#2dd4ce] animate-pulse"></span>
+              <span className="text-xs font-mono text-white font-bold">
+                {existingPapers.length} {existingPapers.length === 1 ? "Paper" : "Papers"} in Active Corpus
+              </span>
+            </div>
+            <button
+              onClick={onContinue}
+              className="px-4 py-2 rounded-xl bg-[#2dd4ce] hover:bg-[#26b8b3] text-[#060b10] font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-[#2dd4ce]/20"
+            >
+              <span>Go to Analysis Workspace →</span>
+            </button>
+          </div>
+        ) : (
+          <div className="w-full max-w-2xl mb-6 p-4 rounded-xl bg-[#08131b] border border-[#16323b] text-center shadow-lg">
+            <p className="text-xs font-mono text-[#2dd4ce] font-bold">
+              Upload your first clinical trial to begin
+            </p>
+            <p className="text-xs text-[#8fa89b] mt-1">
+              Your uploaded biomedical PDFs will form your private, air-gapped evidence corpus.
+            </p>
+          </div>
+        )}
+
         {/* Upload Form Card */}
         <div className="w-full max-w-2xl rounded-2xl bg-[#08131b]/95 border border-[#16323b] p-6 sm:p-8 shadow-2xl shadow-black/80 relative">
           <form onSubmit={handleUploadSubmit} className="space-y-6">

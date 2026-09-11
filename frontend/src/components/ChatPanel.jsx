@@ -7,7 +7,11 @@ export default function ChatPanel({
   sessionMessages = [],
   onSessionCreated,
   onOpenPdf,
+  papers = [],
+  selectedPaper = null,
+  onSelectPaper = null,
 }) {
+  const [selectedPaperId, setSelectedPaperId] = useState(null);
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -20,6 +24,12 @@ export default function ChatPanel({
   const scrollRef = useRef(null);
 
   useEffect(() => {
+    if (selectedPaper && selectedPaper.id) {
+      setSelectedPaperId(selectedPaper.id);
+    }
+  }, [selectedPaper]);
+
+  useEffect(() => {
     if (sessionMessages && sessionMessages.length > 0) {
       setMessages(
         sessionMessages.map((m) => ({
@@ -29,6 +39,14 @@ export default function ChatPanel({
           timestamp: m.timestamp,
         }))
       );
+    } else if (!activeSessionId) {
+      setMessages([
+        {
+          role: "assistant",
+          text: "VeriNexa Closed-Corpus Intelligence Agent ready. Query your active literature corpus to extract p-values, sample cohorts, and cross-reference empirical assertions.",
+          citations: [],
+        },
+      ]);
     }
   }, [sessionMessages, activeSessionId]);
 
@@ -54,7 +72,7 @@ export default function ChatPanel({
     setLoading(true);
 
     try {
-      const data = await chatAudit(q, activeSessionId || null);
+      const data = await chatAudit(q, activeSessionId || null, selectedPaperId || null);
       const botMsg = {
         role: "assistant",
         text: data.answer || "No verified evidence found in current closed corpus.",
@@ -84,16 +102,41 @@ export default function ChatPanel({
   return (
     <div className="flex flex-col h-[560px] rounded-2xl bg-[#08131b]/95 border border-[#16323b] shadow-2xl overflow-hidden">
       {/* Panel Header */}
-      <div className="px-4 py-3 bg-[#060b10] border-b border-[#16323b] flex items-center justify-between">
+      <div className="px-4 py-3 bg-[#060b10] border-b border-[#16323b] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-[#2dd4ce] animate-pulse"></div>
           <span className="font-mono text-xs font-bold text-white tracking-wider uppercase">
             CLOSED-CORPUS AGENTIC RAG CHAT
           </span>
         </div>
-        <span className="text-[10px] font-mono text-[#2dd4ce] bg-[#2dd4ce]/10 px-2.5 py-0.5 rounded-full border border-[#2dd4ce]/30">
-          ZERO HALLUCINATION
-        </span>
+
+        <div className="flex items-center gap-2">
+          {papers && papers.length > 0 && (
+            <select
+              value={selectedPaperId || ""}
+              onChange={(e) => {
+                const val = e.target.value ? Number(e.target.value) : null;
+                setSelectedPaperId(val);
+                if (onSelectPaper && val) {
+                  const match = papers.find((p) => (p.id || p.paper_id) === val);
+                  if (match) onSelectPaper(match);
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg bg-[#0b1720] border border-[#2dd4ce]/40 text-[#2dd4ce] font-mono text-[11px] focus:outline-none cursor-pointer"
+            >
+              <option value="">All Corpus Papers ({papers.length})</option>
+              {papers.map((p) => (
+                <option key={p.id || p.paper_id} value={p.id || p.paper_id}>
+                  #{p.id || p.paper_id}: {p.title || p.filename}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <span className="text-[10px] font-mono text-[#2dd4ce] bg-[#2dd4ce]/10 px-2.5 py-0.5 rounded-full border border-[#2dd4ce]/30">
+            ZERO HALLUCINATION
+          </span>
+        </div>
       </div>
 
       {/* Messages Scroll Area */}

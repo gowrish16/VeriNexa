@@ -569,6 +569,9 @@ function Workspace() {
                     sessionMessages={sessionMessages}
                     onSessionCreated={(newId) => setActiveSessionId(newId)}
                     onOpenPdf={(fn, c) => openPdf(fn, null, c)}
+                    papers={papers}
+                    selectedPaper={selectedPaper}
+                    onSelectPaper={(paper) => paper.filename && openPdf(paper.filename, paper)}
                   />
                 </div>
 

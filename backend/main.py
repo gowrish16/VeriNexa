@@ -68,10 +68,12 @@ def db_check():
 
 # ---------------- Literature Endpoints ----------------
 @app.get("/papers")
-def list_papers():
+def list_papers(current_user: Optional[dict] = Depends(get_optional_user)):
+    if not current_user:
+        return {"papers": []}
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, filename, uploaded_at, user_id FROM papers ORDER BY id;")
+    cursor.execute("SELECT id, title, filename, uploaded_at, user_id FROM papers WHERE user_id = %s ORDER BY id;", (current_user["id"],))
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -81,6 +83,7 @@ def list_papers():
         for r in rows
     ]
     return {"papers": papers}
+
 
 
 # ---------------- Upload with Auth & Gate ----------------
@@ -235,6 +238,16 @@ def get_session_messages(session_id: int, current_user: dict = Depends(get_curre
         "created_at": str(session_row[2]),
         "messages": messages
     }
+
+
+@app.get("/sessions")
+def get_audit_sessions_alias(current_user: dict = Depends(get_current_user)):
+    return get_audit_history(current_user)
+
+
+@app.get("/sessions/{session_id}/history")
+def get_session_history_alias(session_id: int, current_user: dict = Depends(get_current_user)):
+    return get_session_messages(session_id, current_user)
 
 
 @app.post("/api/chat")
