@@ -11,20 +11,27 @@ def get_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 
-def retrieve_claims_per_paper(query, top_k_per_paper=3):
+def retrieve_claims_per_paper(query, top_k_per_paper=3, user_id=None):
     """
     Runs hybrid search, then groups the top results by which paper they came from.
     Returns a dict: {paper_id: [(chunk_index, chunk_text, score), ...]}
     """
-    results = hybrid_search(query, top_k=20)  # get a wider pool, then split by paper
+    results = hybrid_search(query, top_k=20, user_id=user_id)  # get a wider pool, then split by paper
 
     conn = get_connection()
     cursor = conn.cursor()
 
     grouped = {}
-    for chunk_id, chunk_index, chunk_text, score in results:
-        cursor.execute("SELECT paper_id FROM chunks WHERE id = %s;", (chunk_id,))
-        paper_id = cursor.fetchone()[0]
+    for item in results:
+        chunk_id = item[0]
+        chunk_index = item[1]
+        chunk_text = item[2]
+        score = item[3]
+        cursor.execute("SELECT paper_id FROM paper_chunks WHERE id = %s;", (chunk_id,))
+        row = cursor.fetchone()
+        if not row:
+            continue
+        paper_id = row[0]
 
         if paper_id not in grouped:
             grouped[paper_id] = []
@@ -107,13 +114,13 @@ def save_verdict_to_db(grouped_chunks, query, verdict_text):
 
     # Look up the actual chunk ids from paper_id + chunk_index
     cursor.execute(
-        "SELECT id FROM chunks WHERE paper_id = %s AND chunk_index = %s;",
+        "SELECT id FROM paper_chunks WHERE paper_id = %s AND chunk_index = %s;",
         (paper_a_id, chunk_a_index)
     )
     chunk_a_id = cursor.fetchone()[0]
 
     cursor.execute(
-        "SELECT id FROM chunks WHERE paper_id = %s AND chunk_index = %s;",
+        "SELECT id FROM paper_chunks WHERE paper_id = %s AND chunk_index = %s;",
         (paper_b_id, chunk_b_index)
     )
     chunk_b_id = cursor.fetchone()[0]

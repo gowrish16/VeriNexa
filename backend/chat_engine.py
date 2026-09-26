@@ -21,10 +21,10 @@ def query_ollama(prompt, model="llama3.1:8b", stream=False):
     return response.json()["response"]
 
 
-def chat_with_papers(question, top_k=3, paper_id=None):
-    results = hybrid_search(question, top_k=top_k, paper_id=paper_id)
+def chat_with_papers(question, top_k=3, paper_id=None, user_id=None):
+    results = hybrid_search(question, top_k=top_k, paper_id=paper_id, user_id=user_id)
     context = "\n\n".join(
-        [f"[Excerpt {i+1}]: {text}" for i, (_, _, text, _) in enumerate(results)]
+        [f"[Excerpt {i+1}]: {item[2]}" for i, item in enumerate(results)]
     )
 
     prompt = f"""You are a research assistant answering questions about a set of uploaded biomedical papers.
