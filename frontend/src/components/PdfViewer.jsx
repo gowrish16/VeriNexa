@@ -71,10 +71,17 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
 
     const isPoints = x1 > 1.0 || bottomVal > 1.0;
 
-    const leftPct = isPoints ? (x0 / pWidth) * 100 : x0 * 100;
-    const topPct = isPoints ? (topVal / pHeight) * 100 : topVal * 100;
-    const widthPct = isPoints ? ((x1 - x0) / pWidth) * 100 : (x1 - x0) * 100;
-    const heightPct = isPoints ? ((bottomVal - topVal) / pHeight) * 100 : (bottomVal - topVal) * 100;
+    let leftPct = isPoints ? (x0 / pWidth) * 100 : x0 * 100;
+    let topPct = isPoints ? (topVal / pHeight) * 100 : topVal * 100;
+    let widthPct = isPoints ? ((x1 - x0) / pWidth) * 100 : (x1 - x0) * 100;
+    let heightPct = isPoints ? ((bottomVal - topVal) / pHeight) * 100 : (bottomVal - topVal) * 100;
+
+    // Minimal vertical buffer for text ascenders & descenders
+    topPct = Math.max(0, topPct - 0.2);
+    heightPct = Math.min(100 - topPct, heightPct + 0.4);
+
+    // Float badge above unless near top edge of page
+    const isNearTop = topPct < 4;
 
     return (
       <div
@@ -88,10 +95,19 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
           backgroundColor: "rgba(234, 179, 8, 0.25)",
           border: "2px solid #EAB308",
           borderRadius: "4px",
+          boxShadow: "0 0 10px rgba(234, 179, 8, 0.4)",
           pointerEvents: "none",
         }}
       >
-        <span className="absolute -top-5 left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow tracking-wider uppercase whitespace-nowrap">
+        <span
+          className="absolute left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow-md tracking-wider uppercase whitespace-nowrap pointer-events-none z-30"
+          style={{
+            pointerEvents: "none",
+            ...(isNearTop
+              ? { top: "100%", marginTop: "4px" }
+              : { bottom: "100%", marginBottom: "4px" }),
+          }}
+        >
           ✦ CITATION BOUNDING-BOX ANCHOR (PAGE {targetPage})
         </span>
       </div>
@@ -222,7 +238,7 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
               </div>
             }
           >
-            <div className="relative inline-block shadow-2xl rounded-lg overflow-hidden border border-[#16323b]">
+            <div className="relative inline-block shadow-2xl rounded-lg border border-[#16323b]">
               <Page
                 pageNumber={pageNumber}
                 scale={scale}
