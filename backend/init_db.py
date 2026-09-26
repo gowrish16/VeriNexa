@@ -80,6 +80,16 @@ def init_database():
         ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS bbox_y1 FLOAT DEFAULT 0.0;
     """)
 
+    # Ensure all existing paper_chunks bounding boxes are normalized (0.0 to 1.0)
+    cursor.execute("""
+        UPDATE paper_chunks 
+        SET bbox_x0 = ROUND((bbox_x0 / 612.0)::numeric, 4),
+            bbox_y0 = ROUND((bbox_y0 / 792.0)::numeric, 4),
+            bbox_x1 = ROUND((bbox_x1 / 612.0)::numeric, 4),
+            bbox_y1 = ROUND((bbox_y1 / 792.0)::numeric, 4)
+        WHERE bbox_x1 > 1.0;
+    """)
+
     # Create indices for fast scoped retrieval
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_paper_chunks_user_id ON paper_chunks(user_id);

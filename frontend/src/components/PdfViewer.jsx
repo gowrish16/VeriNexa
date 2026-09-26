@@ -58,10 +58,17 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
     const pageHeight = activeCitation.page_height || 792;
 
     const hasBbox = x1 > x0 && y1 > y0;
-    const leftPct = hasBbox ? (x0 / pageWidth) * 100 : 5;
-    const topPct = hasBbox ? (y0 / pageHeight) * 100 : 15;
-    const widthPct = hasBbox ? Math.min(Math.max(((x1 - x0) / pageWidth) * 100, 15), 90) : 90;
-    const heightPct = hasBbox ? Math.min(Math.max(((y1 - y0) / pageHeight) * 100, 5), 50) : 15;
+    if (!hasBbox) return null;
+
+    // Detect if coordinates are normalized ratios (0.0 to 1.0) or raw PDF points (0 to 612/792)
+    const isNormalized = x1 <= 1.0 && y1 <= 1.0;
+    const origW = isNormalized ? 1.0 : pageWidth;
+    const origH = isNormalized ? 1.0 : pageHeight;
+
+    const leftPct = (x0 / origW) * 100;
+    const topPct = (y0 / origH) * 100;
+    const widthPct = ((x1 - x0) / origW) * 100;
+    const heightPct = ((y1 - y0) / origH) * 100;
 
     return (
       <div
@@ -73,7 +80,7 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
           height: `${heightPct}%`,
         }}
       >
-        <span className="absolute -top-5 left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow tracking-wider uppercase">
+        <span className="absolute -top-5 left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow tracking-wider uppercase whitespace-nowrap">
           ✦ CITATION BOUNDING-BOX ANCHOR (PAGE {targetPage})
         </span>
       </div>

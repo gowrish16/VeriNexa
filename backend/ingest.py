@@ -125,6 +125,8 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
     with pdfplumber.open(pdf_path) as pdf:
         for page_idx, page in enumerate(pdf.pages):
             page_number = page_idx + 1
+            page_w = float(page.width or 612.0)
+            page_h = float(page.height or 792.0)
             words = page.extract_words()
             if not words:
                 text = page.extract_text()
@@ -157,10 +159,10 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
                         chunks_with_meta.append({
                             "text": chunk_text,
                             "page_number": page_number,
-                            "bbox_x0": round(float(x0), 2),
-                            "bbox_y0": round(float(y0), 2),
-                            "bbox_x1": round(float(x1), 2),
-                            "bbox_y1": round(float(y1), 2)
+                            "bbox_x0": round(float(x0 / page_w), 4),
+                            "bbox_y0": round(float(y0 / page_h), 4),
+                            "bbox_x1": round(float(x1 / page_w), 4),
+                            "bbox_y1": round(float(y1 / page_h), 4)
                         })
                     current_words = []
                     current_len = 0
@@ -175,10 +177,10 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
                     chunks_with_meta.append({
                         "text": chunk_text,
                         "page_number": page_number,
-                        "bbox_x0": round(float(x0), 2),
-                        "bbox_y0": round(float(y0), 2),
-                        "bbox_x1": round(float(x1), 2),
-                        "bbox_y1": round(float(y1), 2)
+                        "bbox_x0": round(float(x0 / page_w), 4),
+                        "bbox_y0": round(float(y0 / page_h), 4),
+                        "bbox_x1": round(float(x1 / page_w), 4),
+                        "bbox_y1": round(float(y1 / page_h), 4)
                     })
 
     return chunks_with_meta
