@@ -218,30 +218,85 @@ function Workspace() {
     }
   };
 
-  // Format Verdict Badge
-  const renderVerdictBadge = (verdict) => {
-    if (!verdict) return null;
-    const clean = verdict.toUpperCase();
+  // Parse Verdict string into clean badge label & explanation text
+  const parseVerdictInfo = (rawVerdict, fallbackText = "") => {
+    if (!rawVerdict) {
+      return { label: "VERDICT: UNCLEAR", type: "unclear", reason: fallbackText };
+    }
 
-    if (clean.includes("CONTRADICT") || clean.includes("INCONSISTENT")) {
+    const str = String(rawVerdict).trim();
+    let head = str;
+    let reason = fallbackText;
+
+    const match = str.match(/(?:REASON|EXPLANATION):\s*([\s\S]*)/i);
+    if (match) {
+      reason = match[1].trim();
+      head = str.substring(0, match.index).trim();
+    } else if (str.includes("\n")) {
+      const parts = str.split("\n").map((p) => p.trim()).filter(Boolean);
+      head = parts[0];
+      if (parts.length > 1 && !reason) {
+        reason = parts.slice(1).join(" ");
+      }
+    }
+
+    const cleanHead = head.replace(/^VERDICT:\s*/i, "").trim().toUpperCase();
+
+    let label = "VERDICT: UNCLEAR";
+    let type = "unclear";
+
+    if (cleanHead.includes("CONTRADICT") || cleanHead.includes("INCONSISTENT")) {
+      label = "VERDICT: CONTRADICT";
+      type = "red";
+    } else if (cleanHead.includes("PARTIAL")) {
+      label = cleanHead.includes("PARTIALLY CONSISTENT") ? "VERDICT: PARTIALLY CONSISTENT" : "VERDICT: PARTIAL";
+      type = "amber";
+    } else if (cleanHead.includes("CONSISTENT") || cleanHead.includes("AGREE") || cleanHead.includes("MATCH")) {
+      label = "VERDICT: CONSISTENT";
+      type = "green";
+    } else if (cleanHead) {
+      label = `VERDICT: ${cleanHead}`;
+      type = "unclear";
+    }
+
+    if (!reason || reason === head || reason === `VERDICT: ${cleanHead}`) {
+      reason = fallbackText || str;
+      reason = reason.replace(/^VERDICT:[^\n]*\n?/i, "").replace(/^REASON:\s*/i, "").trim() || str;
+    }
+
+    return { label, type, reason };
+  };
+
+  // Format Verdict Badge
+  const renderVerdictBadge = (verdict, fallbackText = "") => {
+    const { label, type } = parseVerdictInfo(verdict, fallbackText);
+
+    if (type === "red") {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#ff4757]/15 border border-[#ff4757]/40 text-[#ff4757] font-mono font-bold text-xs">
           <XCircle className="w-3.5 h-3.5" />
-          {verdict}
+          {label}
         </span>
       );
-    } else if (clean.includes("PARTIAL")) {
+    } else if (type === "amber") {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#e8a33d]/15 border border-[#e8a33d]/40 text-[#e8a33d] font-mono font-bold text-xs">
           <AlertTriangle className="w-3.5 h-3.5" />
-          {verdict}
+          {label}
+        </span>
+      );
+    } else if (type === "green") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#2dd4ce]/15 border border-[#2dd4ce]/40 text-[#2dd4ce] font-mono font-bold text-xs">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          {label}
         </span>
       );
     } else {
       return (
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#2dd4ce]/15 border border-[#2dd4ce]/40 text-[#2dd4ce] font-mono font-bold text-xs">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          {verdict}
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8fa89b]/15 border border-[#8fa89b]/40 text-[#8fa89b] font-mono font-bold text-xs">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {label}
         </span>
       );
     }
@@ -616,17 +671,20 @@ function Workspace() {
                     </button>
                   </form>
 
-                  {compareResult && (
-                    <div className="p-4 rounded-xl bg-[#060b10] border border-[#16323b] space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-[#8fa89b] uppercase">Arbitration Verdict:</span>
-                        {renderVerdictBadge(compareResult.verdict)}
+                  {compareResult && (() => {
+                    const parsed = parseVerdictInfo(compareResult.verdict, compareResult.analysis);
+                    return (
+                      <div className="p-4 rounded-xl bg-[#060b10] border border-[#16323b] space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs text-[#8fa89b] uppercase">Arbitration Verdict:</span>
+                          {renderVerdictBadge(compareResult.verdict, compareResult.analysis)}
+                        </div>
+                        <p className="text-xs text-[#d8f3f0] leading-relaxed">
+                          {parsed.reason}
+                        </p>
                       </div>
-                      <p className="text-xs text-[#d8f3f0] leading-relaxed">
-                        {compareResult.verdict?.split("REASON:")[1] || compareResult.analysis || compareResult.verdict}
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* SECTION 5: CHECK PAPER INTEGRITY (Abstract Spin Detector) */}
@@ -681,17 +739,20 @@ function Workspace() {
                     </div>
                   </form>
 
-                  {integrityResult && (
-                    <div className="p-4 rounded-xl bg-[#060b10] border border-[#16323b] space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-[#8fa89b] uppercase">Integrity Verdict:</span>
-                        {renderVerdictBadge(integrityResult.verdict)}
+                  {integrityResult && (() => {
+                    const parsed = parseVerdictInfo(integrityResult.verdict, integrityResult.explanation);
+                    return (
+                      <div className="p-4 rounded-xl bg-[#060b10] border border-[#16323b] space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs text-[#8fa89b] uppercase">Integrity Verdict:</span>
+                          {renderVerdictBadge(integrityResult.verdict, integrityResult.explanation)}
+                        </div>
+                        <p className="text-xs text-[#d8f3f0] leading-relaxed">
+                          {parsed.reason}
+                        </p>
                       </div>
-                      <p className="text-xs text-[#d8f3f0] leading-relaxed">
-                        {integrityResult.verdict?.split("REASON:")[1] || integrityResult.explanation || integrityResult.verdict}
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
               </div>
