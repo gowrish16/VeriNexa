@@ -1,6 +1,7 @@
 import os
 import json
 import psycopg2
+import psycopg2.extras
 import requests
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
@@ -224,20 +225,25 @@ def ingest_pdf(pdf_path, title, user_id=None):
     chunk_texts = [item["text"] for item in chunks_meta]
     embeddings = model.encode(chunk_texts).tolist()
 
-    for index, (item, embedding) in enumerate(zip(chunks_meta, embeddings)):
-        cursor.execute(
-            """
-            INSERT INTO paper_chunks (
-                paper_id, user_id, chunk_text, chunk_index, page_number,
-                bbox_x0, bbox_y0, bbox_x1, bbox_y1, embedding
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """,
-            (
-                paper_id, user_id, item["text"], index, item["page_number"],
-                item["bbox_x0"], item["bbox_y0"], item["bbox_x1"], item["bbox_y1"],
-                embedding
-            )
+    insert_records = [
+        (
+            paper_id, user_id, item["text"], index, item["page_number"],
+            item["bbox_x0"], item["bbox_y0"], item["bbox_x1"], item["bbox_y1"],
+            embedding
         )
+        for index, (item, embedding) in enumerate(zip(chunks_meta, embeddings))
+    ]
+
+    psycopg2.extras.execute_batch(
+        cursor,
+        """
+        INSERT INTO paper_chunks (
+            paper_id, user_id, chunk_text, chunk_index, page_number,
+            bbox_x0, bbox_y0, bbox_x1, bbox_y1, embedding
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        """,
+        insert_records
+    )
 
     conn.commit()
     cursor.close()

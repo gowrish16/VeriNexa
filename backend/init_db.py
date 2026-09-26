@@ -130,10 +130,19 @@ def init_database():
         );
     """)
 
+    # 6. Synchronize primary key sequences for all tables to prevent UniqueViolation collisions
+    cursor.execute("""
+        SELECT setval(pg_get_serial_sequence('paper_chunks', 'id'), COALESCE((SELECT MAX(id) FROM paper_chunks), 1));
+        SELECT setval(pg_get_serial_sequence('papers', 'id'), COALESCE((SELECT MAX(id) FROM papers), 1));
+        SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE((SELECT MAX(id) FROM users), 1));
+        SELECT setval(pg_get_serial_sequence('audit_sessions', 'id'), COALESCE((SELECT MAX(id) FROM audit_sessions), 1));
+        SELECT setval(pg_get_serial_sequence('audit_messages', 'id'), COALESCE((SELECT MAX(id) FROM audit_messages), 1));
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
-    print("[init_db] Database tables and paper_chunks schema verified and migrated successfully.")
+    print("[init_db] Database tables, sequences, and paper_chunks schema verified and synchronized successfully.")
 
 if __name__ == "__main__":
     init_database()
