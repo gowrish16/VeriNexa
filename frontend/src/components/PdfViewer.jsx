@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import {
   X,
@@ -26,12 +26,45 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
   const [scale, setScale] = useState(1.05);
   const [useIframeFallback, setUseIframeFallback] = useState(false);
 
+  const scrollContainerRef = useRef(null);
+
   useEffect(() => {
     const targetPage = activeCitation?.page_number || activeCitation?.page;
     if (targetPage && typeof targetPage === "number") {
       setPageNumber(targetPage);
     }
   }, [activeCitation]);
+
+  useEffect(() => {
+    if (!scrollContainerRef.current) return;
+    const container = scrollContainerRef.current;
+
+    if (!activeCitation) {
+      container.scrollTop = 0;
+      return;
+    }
+
+    const citation = activeCitation;
+    const pHeight = citation.page_height || 792;
+    const rawX0 = citation.bbox_x0 ?? 0;
+    const rawTop = citation.bbox_top ?? citation.bbox_y0 ?? 0;
+    const rawX1 = citation.bbox_x1 ?? 0;
+    const rawY1 = citation.bbox_y1 ?? 0;
+
+    const isPoints = rawX1 > 1.0 || rawY1 > 1.0;
+    const normTop = isPoints ? (rawTop / pHeight) * 100 : rawTop * 100;
+    const hasValidBbox = rawX1 > rawX0 && rawY1 > rawTop && normTop >= 0 && normTop <= 100;
+
+    if (hasValidBbox && normTop > 0) {
+      const scrollableH = container.scrollHeight;
+      const targetScroll = (normTop / 100) * scrollableH - container.clientHeight / 3;
+      const maxScroll = Math.max(0, scrollableH - container.clientHeight);
+      container.scrollTop = Math.max(0, Math.min(maxScroll, targetScroll));
+    } else {
+      // Gracefully default to scrolling to top of page without jumping out of bounds
+      container.scrollTop = 0;
+    }
+  }, [activeCitation, pageNumber, scale]);
 
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
@@ -43,7 +76,7 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
     }
   }
 
-  // Calculate bounding box overlay coordinates
+  // Calculate bounding box overlay coordinates with bounds checking & safety clamping
   const renderBboxOverlay = () => {
     if (!activeCitation) return null;
     const targetPage = activeCitation.page_number || activeCitation.page || 1;
@@ -51,47 +84,48 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
 
     const citation = activeCitation;
 
-    let topVal = citation.bbox_top ?? citation.bbox_y0 ?? 0;
-    let bottomVal = citation.bbox_y1 ?? 0;
-    let x0 = citation.bbox_x0 ?? 0;
-    let x1 = citation.bbox_x1 ?? 0;
-
     const pWidth = citation.page_width || 612;
     const pHeight = citation.page_height || 792;
 
+    let rawX0 = citation.bbox_x0 ?? 0;
+    let rawTop = citation.bbox_top ?? citation.bbox_y0 ?? 0;
+    let rawX1 = citation.bbox_x1 ?? 0;
+    let rawY1 = citation.bbox_y1 ?? 0;
+
     // Handle inversion if y0 and y1 were passed in reverse
-    if (topVal > bottomVal && bottomVal > 0) {
-      const temp = topVal;
-      topVal = bottomVal;
-      bottomVal = temp;
+    if (rawTop > rawY1 && rawY1 > 0) {
+      const temp = rawTop;
+      rawTop = rawY1;
+      rawY1 = temp;
     }
 
-    const hasBbox = x1 > x0 && bottomVal > topVal;
-    if (!hasBbox) return null;
+    const isPoints = rawX1 > 1.0 || rawY1 > 1.0;
 
-    const isPoints = x1 > 1.0 || bottomVal > 1.0;
+    const normX0 = isPoints ? (rawX0 / pWidth) * 100 : rawX0 * 100;
+    const normTop = isPoints ? (rawTop / pHeight) * 100 : rawTop * 100;
+    const normX1 = isPoints ? (rawX1 / pWidth) * 100 : rawX1 * 100;
+    const normY1 = isPoints ? (rawY1 / pHeight) * 100 : rawY1 * 100;
 
-    let leftPct = isPoints ? (x0 / pWidth) * 100 : x0 * 100;
-    let topPct = isPoints ? (topVal / pHeight) * 100 : topVal * 100;
-    let widthPct = isPoints ? ((x1 - x0) / pWidth) * 100 : (x1 - x0) * 100;
-    let heightPct = isPoints ? ((bottomVal - topVal) / pHeight) * 100 : (bottomVal - topVal) * 100;
+    // Safety bounds checking ensuring coordinates never exceed 0% to 100% of the page
+    const left = Math.max(0, Math.min(100, normX0));
+    const top = Math.max(0, Math.min(100, normTop));
+    const width = Math.max(5, Math.min(100 - left, normX1 - normX0));
+    const height = Math.max(2, Math.min(100 - top, normY1 - normTop));
 
-    // Minimal vertical buffer for text ascenders & descenders
-    topPct = Math.max(0, topPct - 0.2);
-    heightPct = Math.min(100 - topPct, heightPct + 0.4);
+    const hasValidBbox = rawX1 > rawX0 && rawY1 > rawTop && width > 0 && height > 0;
+    if (!hasValidBbox) return null;
 
-    // Float badge above unless near top edge of page
-    const isNearTop = topPct < 4;
+    const isNearTop = top < 4;
 
     return (
       <div
         className="absolute pointer-events-none rounded transition-all duration-300 animate-pulse z-20"
         style={{
           position: "absolute",
-          left: `${leftPct}%`,
-          top: `${topPct}%`,
-          width: `${widthPct}%`,
-          height: `${heightPct}%`,
+          left: `${left}%`,
+          top: `${top}%`,
+          width: `${width}%`,
+          height: `${height}%`,
           backgroundColor: "rgba(234, 179, 8, 0.25)",
           border: "2px solid #EAB308",
           borderRadius: "4px",
@@ -206,7 +240,7 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
       )}
 
       {/* PDF Document Render Surface */}
-      <div className="flex-1 overflow-auto bg-[#03070a] p-4 flex justify-center items-start no-scrollbar relative">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto bg-[#03070a] p-4 flex justify-center items-start no-scrollbar relative">
         {useIframeFallback ? (
           <iframe
             src={fileUrl}
