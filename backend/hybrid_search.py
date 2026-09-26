@@ -53,45 +53,57 @@ def get_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 
-def load_all_chunks(paper_id: Optional[int] = None):
+def load_all_chunks(paper_id: Optional[int] = None, user_id: Optional[int] = None):
     conn = get_connection()
     cursor = conn.cursor()
+    conditions = []
+    params = []
+
     if paper_id is not None:
-        cursor.execute(
-            "SELECT id, chunk_index, chunk_text FROM chunks WHERE paper_id = %s ORDER BY chunk_index;",
-            (paper_id,)
-        )
-    else:
-        cursor.execute("SELECT id, chunk_index, chunk_text FROM chunks ORDER BY chunk_index;")
+        conditions.append("paper_id = %s")
+        params.append(paper_id)
+    if user_id is not None:
+        conditions.append("(user_id = %s OR user_id IS NULL)")
+        params.append(user_id)
+
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+    query_str = f"""
+        SELECT id, chunk_index, chunk_text, page_number, bbox_x0, bbox_y0, bbox_x1, bbox_y1
+        FROM paper_chunks
+        {where_clause}
+        ORDER BY chunk_index;
+    """
+    cursor.execute(query_str, params)
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
     return rows
 
 
-def get_vector_ranking(query: str, paper_id: Optional[int] = None):
+def get_vector_ranking(query: str, paper_id: Optional[int] = None, user_id: Optional[int] = None):
     query_embedding = model.encode(query).tolist()
     conn = get_connection()
     cursor = conn.cursor()
+
+    conditions = []
+    params = []
     if paper_id is not None:
-        cursor.execute(
-            """
-            SELECT id
-            FROM chunks
-            WHERE paper_id = %s
-            ORDER BY embedding <=> %s::vector ASC;
-            """,
-            (paper_id, query_embedding)
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT id
-            FROM chunks
-            ORDER BY embedding <=> %s::vector ASC;
-            """,
-            (query_embedding,)
-        )
+        conditions.append("paper_id = %s")
+        params.append(paper_id)
+    if user_id is not None:
+        conditions.append("(user_id = %s OR user_id IS NULL)")
+        params.append(user_id)
+
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+    params.append(query_embedding)
+
+    query_str = f"""
+        SELECT id
+        FROM paper_chunks
+        {where_clause}
+        ORDER BY embedding <=> %s::vector ASC;
+    """
+    cursor.execute(query_str, params)
     ranked_ids = [row[0] for row in cursor.fetchall()]
     cursor.close()
     conn.close()
@@ -117,19 +129,29 @@ def reciprocal_rank_fusion(rankings, k=60):
     return rrf_scores
 
 
-def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None):
+def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None, user_id: Optional[int] = None):
     search_query = denoise_query(query)
 
-    chunks = load_all_chunks(paper_id=paper_id)
+    chunks = load_all_chunks(paper_id=paper_id, user_id=user_id)
     if not chunks:
         return []
 
     chunk_ids = [c[0] for c in chunks]
     chunk_indexes = {c[0]: c[1] for c in chunks}
     chunk_texts_map = {c[0]: c[2] for c in chunks}
+    chunk_meta_map = {
+        c[0]: {
+            "page_number": c[3] if len(c) > 3 else 1,
+            "bbox_x0": c[4] if len(c) > 4 else 0.0,
+            "bbox_y0": c[5] if len(c) > 5 else 0.0,
+            "bbox_x1": c[6] if len(c) > 6 else 0.0,
+            "bbox_y1": c[7] if len(c) > 7 else 0.0,
+        }
+        for c in chunks
+    }
     chunk_texts = [c[2] for c in chunks]
 
-    vector_ranking = get_vector_ranking(search_query, paper_id=paper_id)
+    vector_ranking = get_vector_ranking(search_query, paper_id=paper_id, user_id=user_id)
     bm25_ranking = get_bm25_ranking(search_query, chunk_ids, chunk_texts)
 
     fused_scores = reciprocal_rank_fusion([vector_ranking, bm25_ranking])
@@ -138,7 +160,18 @@ def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None):
     for cid, score in fused_scores.items():
         if cid in chunk_texts_map:
             boosted_score = apply_section_boost(chunk_texts_map[cid], score)
-            boosted_results.append((cid, chunk_indexes[cid], chunk_texts_map[cid], boosted_score))
+            meta = chunk_meta_map.get(cid, {})
+            boosted_results.append((
+                cid,
+                chunk_indexes[cid],
+                chunk_texts_map[cid],
+                boosted_score,
+                meta.get("page_number", 1),
+                meta.get("bbox_x0", 0.0),
+                meta.get("bbox_y0", 0.0),
+                meta.get("bbox_x1", 0.0),
+                meta.get("bbox_y1", 0.0)
+            ))
 
     boosted_results.sort(key=lambda x: x[3], reverse=True)
     return boosted_results[:top_k]

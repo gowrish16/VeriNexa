@@ -187,3 +187,19 @@ export async function fetchSessionMessages(sessionId) {
 export function getPdfFileUrl(filename) {
   return `${API_BASE_URL}/files/${encodeURIComponent(filename)}`;
 }
+
+// 9. GET /api/matrix
+export async function fetchCrossTrialMatrix() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/matrix`, {
+      method: "GET",
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.matrix || [];
+  } catch (err) {
+    console.warn("Could not load cross-trial matrix:", err);
+    return [];
+  }
+}

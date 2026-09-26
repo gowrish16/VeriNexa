@@ -40,12 +40,74 @@ def init_database():
         END $$;
     """)
 
-    # 2. Ensure papers table has user_id column
+    # 2. Ensure pgvector extension and papers table has user_id column
+    cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     cursor.execute("""
-        ALTER TABLE papers ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        CREATE TABLE IF NOT EXISTS papers (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE papers ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
     """)
 
-    # 3. Create audit_sessions table
+    # 3. Create paper_chunks table strictly scoped by user_id with bounding boxes and pgvector(384)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS paper_chunks (
+            id SERIAL PRIMARY KEY,
+            paper_id INTEGER REFERENCES papers(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            chunk_text TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            page_number INTEGER DEFAULT 1,
+            bbox_x0 FLOAT DEFAULT 0.0,
+            bbox_y0 FLOAT DEFAULT 0.0,
+            bbox_x1 FLOAT DEFAULT 0.0,
+            bbox_y1 FLOAT DEFAULT 0.0,
+            embedding vector(384)
+        );
+    """)
+
+    # Migrations for paper_chunks columns if table existed
+    cursor.execute("""
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS page_number INTEGER DEFAULT 1;
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS bbox_x0 FLOAT DEFAULT 0.0;
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS bbox_y0 FLOAT DEFAULT 0.0;
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS bbox_x1 FLOAT DEFAULT 0.0;
+        ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS bbox_y1 FLOAT DEFAULT 0.0;
+    """)
+
+    # Create indices for fast scoped retrieval
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paper_chunks_user_id ON paper_chunks(user_id);
+        CREATE INDEX IF NOT EXISTS idx_paper_chunks_paper_id ON paper_chunks(paper_id);
+        CREATE INDEX IF NOT EXISTS idx_paper_chunks_user_paper ON paper_chunks(user_id, paper_id);
+    """)
+
+    # Safely handle transition from legacy BASE TABLE 'chunks' to 'paper_chunks' + VIEW 'chunks'
+    cursor.execute("""
+        SELECT table_type FROM information_schema.tables WHERE table_name = 'chunks';
+    """)
+    table_type_row = cursor.fetchone()
+    if table_type_row and table_type_row[0] == 'BASE TABLE':
+        cursor.execute("""
+            INSERT INTO paper_chunks (id, paper_id, chunk_text, chunk_index, embedding)
+            SELECT id, paper_id, chunk_text, chunk_index, embedding FROM chunks
+            ON CONFLICT (id) DO NOTHING;
+        """)
+        cursor.execute("DROP TABLE chunks CASCADE;")
+
+    # Create view alias 'chunks' pointing to 'paper_chunks' for backward compatibility
+    cursor.execute("""
+        CREATE OR REPLACE VIEW chunks AS
+        SELECT id, paper_id, user_id, chunk_text, chunk_index, page_number, bbox_x0, bbox_y0, bbox_x1, bbox_y1, embedding
+        FROM paper_chunks;
+    """)
+
+    # 4. Create audit_sessions table strictly scoped by user_id
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_sessions (
             id SERIAL PRIMARY KEY,
@@ -53,9 +115,10 @@ def init_database():
             title VARCHAR(255) NOT NULL DEFAULT 'Biomedical Audit Session',
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE audit_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
     """)
 
-    # 4. Create audit_messages table
+    # 5. Create audit_messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_messages (
             id SERIAL PRIMARY KEY,
@@ -70,7 +133,7 @@ def init_database():
     conn.commit()
     cursor.close()
     conn.close()
-    print("[init_db] Database tables verified and migrated successfully.")
+    print("[init_db] Database tables and paper_chunks schema verified and migrated successfully.")
 
 if __name__ == "__main__":
     init_database()

@@ -119,6 +119,70 @@ def chunk_text(text, chunk_size=CHUNK_SIZE):
     return chunks
 
 
+def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
+    chunks_with_meta = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_idx, page in enumerate(pdf.pages):
+            page_number = page_idx + 1
+            words = page.extract_words()
+            if not words:
+                text = page.extract_text()
+                if text:
+                    for i in range(0, len(text), chunk_size):
+                        chunk = text[i:i + chunk_size].strip()
+                        if chunk:
+                            chunks_with_meta.append({
+                                "text": chunk,
+                                "page_number": page_number,
+                                "bbox_x0": 0.0,
+                                "bbox_y0": 0.0,
+                                "bbox_x1": 0.0,
+                                "bbox_y1": 0.0
+                            })
+                continue
+
+            current_words = []
+            current_len = 0
+            for w in words:
+                current_words.append(w)
+                current_len += len(w["text"]) + 1
+                if current_len >= chunk_size:
+                    chunk_text = " ".join([w["text"] for w in current_words]).strip()
+                    if chunk_text:
+                        x0 = min(w["x0"] for w in current_words)
+                        y0 = min(w["top"] for w in current_words)
+                        x1 = max(w["x1"] for w in current_words)
+                        y1 = max(w["bottom"] for w in current_words)
+                        chunks_with_meta.append({
+                            "text": chunk_text,
+                            "page_number": page_number,
+                            "bbox_x0": round(float(x0), 2),
+                            "bbox_y0": round(float(y0), 2),
+                            "bbox_x1": round(float(x1), 2),
+                            "bbox_y1": round(float(y1), 2)
+                        })
+                    current_words = []
+                    current_len = 0
+
+            if current_words:
+                chunk_text = " ".join([w["text"] for w in current_words]).strip()
+                if chunk_text:
+                    x0 = min(w["x0"] for w in current_words)
+                    y0 = min(w["top"] for w in current_words)
+                    x1 = max(w["x1"] for w in current_words)
+                    y1 = max(w["bottom"] for w in current_words)
+                    chunks_with_meta.append({
+                        "text": chunk_text,
+                        "page_number": page_number,
+                        "bbox_x0": round(float(x0), 2),
+                        "bbox_y0": round(float(y0), 2),
+                        "bbox_x1": round(float(x1), 2),
+                        "bbox_y1": round(float(y1), 2)
+                    })
+
+    return chunks_with_meta
+
+
 def ingest_pdf(pdf_path, title, user_id=None):
     print(f"Checking document type for {pdf_path}...")
     is_biomedical, classification_result = check_is_biomedical(pdf_path)
@@ -127,12 +191,17 @@ def ingest_pdf(pdf_path, title, user_id=None):
         print("Rejected: not a biomedical research paper.")
         return {"rejected": True, "reason": classification_result}
 
-    print(f"Extracting text from {pdf_path}...")
-    text = extract_text_from_pdf(pdf_path)
+    print(f"Extracting text and bounding boxes from {pdf_path}...")
+    chunks_meta = extract_chunks_with_bboxes(pdf_path)
+    if not chunks_meta:
+        text = extract_text_from_pdf(pdf_path)
+        raw_chunks = chunk_text(text)
+        chunks_meta = [
+            {"text": c, "page_number": 1, "bbox_x0": 0.0, "bbox_y0": 0.0, "bbox_x1": 0.0, "bbox_y1": 0.0}
+            for c in raw_chunks
+        ]
 
-    print("Splitting into chunks...")
-    chunks = chunk_text(text)
-    print(f"Created {len(chunks)} chunks.")
+    print(f"Created {len(chunks_meta)} chunks with layout metadata.")
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -152,19 +221,28 @@ def ingest_pdf(pdf_path, title, user_id=None):
     print(f"Inserted paper record with id: {paper_id}")
 
     print("Generating embeddings in batch...")
-    embeddings = model.encode(chunks).tolist()
+    chunk_texts = [item["text"] for item in chunks_meta]
+    embeddings = model.encode(chunk_texts).tolist()
 
-    for index, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+    for index, (item, embedding) in enumerate(zip(chunks_meta, embeddings)):
         cursor.execute(
-            "INSERT INTO chunks (paper_id, chunk_text, chunk_index, embedding) VALUES (%s, %s, %s, %s);",
-            (paper_id, chunk, index, embedding)
+            """
+            INSERT INTO paper_chunks (
+                paper_id, user_id, chunk_text, chunk_index, page_number,
+                bbox_x0, bbox_y0, bbox_x1, bbox_y1, embedding
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """,
+            (
+                paper_id, user_id, item["text"], index, item["page_number"],
+                item["bbox_x0"], item["bbox_y0"], item["bbox_x1"], item["bbox_y1"],
+                embedding
+            )
         )
-    
 
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"Successfully ingested {len(chunks)} chunks for paper_id {paper_id}.")
+    print(f"Successfully ingested {len(chunks_meta)} chunks for paper_id {paper_id} (user_id: {user_id}).")
     return {"rejected": False, "paper_id": paper_id}
 
 

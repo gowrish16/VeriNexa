@@ -27,17 +27,58 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
   const [useIframeFallback, setUseIframeFallback] = useState(false);
 
   useEffect(() => {
-    if (activeCitation?.page) {
-      setPageNumber(activeCitation.page);
+    const targetPage = activeCitation?.page_number || activeCitation?.page;
+    if (targetPage && typeof targetPage === "number") {
+      setPageNumber(targetPage);
     }
   }, [activeCitation]);
 
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
-    if (!activeCitation?.page) {
+    const targetPage = activeCitation?.page_number || activeCitation?.page;
+    if (targetPage && typeof targetPage === "number") {
+      setPageNumber(targetPage);
+    } else {
       setPageNumber(1);
     }
   }
+
+  // Calculate bounding box overlay coordinates
+  const renderBboxOverlay = () => {
+    if (!activeCitation) return null;
+    const targetPage = activeCitation.page_number || activeCitation.page || 1;
+    if (pageNumber !== targetPage) return null;
+
+    const x0 = activeCitation.bbox_x0 ?? 0;
+    const y0 = activeCitation.bbox_y0 ?? 0;
+    const x1 = activeCitation.bbox_x1 ?? 0;
+    const y1 = activeCitation.bbox_y1 ?? 0;
+
+    const pageWidth = activeCitation.page_width || 612;
+    const pageHeight = activeCitation.page_height || 792;
+
+    const hasBbox = x1 > x0 && y1 > y0;
+    const leftPct = hasBbox ? (x0 / pageWidth) * 100 : 5;
+    const topPct = hasBbox ? (y0 / pageHeight) * 100 : 15;
+    const widthPct = hasBbox ? Math.min(Math.max(((x1 - x0) / pageWidth) * 100, 15), 90) : 90;
+    const heightPct = hasBbox ? Math.min(Math.max(((y1 - y0) / pageHeight) * 100, 5), 50) : 15;
+
+    return (
+      <div
+        className="absolute pointer-events-none rounded border-2 border-[#e8a33d] bg-[#e8a33d]/30 shadow-xl shadow-[#e8a33d]/40 transition-all duration-300 animate-pulse z-20"
+        style={{
+          left: `${leftPct}%`,
+          top: `${topPct}%`,
+          width: `${widthPct}%`,
+          height: `${heightPct}%`,
+        }}
+      >
+        <span className="absolute -top-5 left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow tracking-wider uppercase">
+          ✦ CITATION BOUNDING-BOX ANCHOR (PAGE {targetPage})
+        </span>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col h-full rounded-2xl bg-[#08131b] border border-[#16323b] shadow-2xl overflow-hidden">
@@ -163,13 +204,15 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
               </div>
             }
           >
-            <Page
-              pageNumber={pageNumber}
-              scale={scale}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-              className="shadow-2xl rounded-lg overflow-hidden border border-[#16323b]"
-            />
+            <div className="relative inline-block shadow-2xl rounded-lg overflow-hidden border border-[#16323b]">
+              <Page
+                pageNumber={pageNumber}
+                scale={scale}
+                renderTextLayer={true}
+                renderAnnotationLayer={true}
+              />
+              {renderBboxOverlay()}
+            </div>
           </Document>
         )}
       </div>

@@ -28,6 +28,7 @@ import LoginModal from "./LoginModal";
 import HistorySidebar from "./components/HistorySidebar";
 import PdfViewer from "./components/PdfViewer";
 import ChatPanel from "./components/ChatPanel";
+import CrossTrialMatrix from "./components/CrossTrialMatrix";
 import {
   fetchPapers,
   uploadPaper,
@@ -575,7 +576,13 @@ function Workspace() {
                   />
                 </div>
 
-                {/* SECTION 4: COMPARE ACROSS PAPERS (Conflict Matrix) */}
+                {/* SECTION 4: CROSS-TRIAL METRIC MATRIX */}
+                <CrossTrialMatrix
+                  papers={papers}
+                  onOpenPdf={(fn, c) => openPdf(fn, null, c)}
+                />
+
+                {/* SECTION 5: COMPARE ACROSS PAPERS (Conflict Matrix) */}
                 <div className="rounded-2xl bg-[#08131b]/95 border border-[#16323b] p-5 shadow-xl space-y-4">
                   <div className="flex items-center justify-between border-b border-[#16323b] pb-3">
                     <div className="flex items-center gap-2">
