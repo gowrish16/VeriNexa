@@ -49,35 +49,46 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
     const targetPage = activeCitation.page_number || activeCitation.page || 1;
     if (pageNumber !== targetPage) return null;
 
-    const x0 = activeCitation.bbox_x0 ?? 0;
-    const y0 = activeCitation.bbox_y0 ?? 0;
-    const x1 = activeCitation.bbox_x1 ?? 0;
-    const y1 = activeCitation.bbox_y1 ?? 0;
+    const citation = activeCitation;
 
-    const pageWidth = activeCitation.page_width || 612;
-    const pageHeight = activeCitation.page_height || 792;
+    let topVal = citation.bbox_top ?? citation.bbox_y0 ?? 0;
+    let bottomVal = citation.bbox_y1 ?? 0;
+    let x0 = citation.bbox_x0 ?? 0;
+    let x1 = citation.bbox_x1 ?? 0;
 
-    const hasBbox = x1 > x0 && y1 > y0;
+    const pWidth = citation.page_width || 612;
+    const pHeight = citation.page_height || 792;
+
+    // Handle inversion if y0 and y1 were passed in reverse
+    if (topVal > bottomVal && bottomVal > 0) {
+      const temp = topVal;
+      topVal = bottomVal;
+      bottomVal = temp;
+    }
+
+    const hasBbox = x1 > x0 && bottomVal > topVal;
     if (!hasBbox) return null;
 
-    // Detect if coordinates are normalized ratios (0.0 to 1.0) or raw PDF points (0 to 612/792)
-    const isNormalized = x1 <= 1.0 && y1 <= 1.0;
-    const origW = isNormalized ? 1.0 : pageWidth;
-    const origH = isNormalized ? 1.0 : pageHeight;
+    const isPoints = x1 > 1.0 || bottomVal > 1.0;
 
-    const leftPct = (x0 / origW) * 100;
-    const topPct = (y0 / origH) * 100;
-    const widthPct = ((x1 - x0) / origW) * 100;
-    const heightPct = ((y1 - y0) / origH) * 100;
+    const leftPct = isPoints ? (x0 / pWidth) * 100 : x0 * 100;
+    const topPct = isPoints ? (topVal / pHeight) * 100 : topVal * 100;
+    const widthPct = isPoints ? ((x1 - x0) / pWidth) * 100 : (x1 - x0) * 100;
+    const heightPct = isPoints ? ((bottomVal - topVal) / pHeight) * 100 : (bottomVal - topVal) * 100;
 
     return (
       <div
-        className="absolute pointer-events-none rounded border-2 border-[#e8a33d] bg-[#e8a33d]/30 shadow-xl shadow-[#e8a33d]/40 transition-all duration-300 animate-pulse z-20"
+        className="absolute pointer-events-none rounded transition-all duration-300 animate-pulse z-20"
         style={{
+          position: "absolute",
           left: `${leftPct}%`,
           top: `${topPct}%`,
           width: `${widthPct}%`,
           height: `${heightPct}%`,
+          backgroundColor: "rgba(234, 179, 8, 0.25)",
+          border: "2px solid #EAB308",
+          borderRadius: "4px",
+          pointerEvents: "none",
         }}
       >
         <span className="absolute -top-5 left-0 px-2 py-0.5 text-[9.5px] font-mono font-bold bg-[#e8a33d] text-[#060b10] rounded shadow tracking-wider uppercase whitespace-nowrap">

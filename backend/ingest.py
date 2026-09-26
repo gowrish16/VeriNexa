@@ -120,6 +120,22 @@ def chunk_text(text, chunk_size=CHUNK_SIZE):
     return chunks
 
 
+def get_word_top(w, page_h):
+    if "top" in w and w["top"] is not None:
+        return float(w["top"])
+    if "y1" in w and w["y1"] is not None:
+        return float(page_h - w["y1"])
+    return 0.0
+
+
+def get_word_bottom(w, page_h):
+    if "bottom" in w and w["bottom"] is not None:
+        return float(w["bottom"])
+    if "y0" in w and w["y0"] is not None:
+        return float(page_h - w["y0"])
+    return float(page_h)
+
+
 def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
     chunks_with_meta = []
     with pdfplumber.open(pdf_path) as pdf:
@@ -139,6 +155,7 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
                                 "page_number": page_number,
                                 "bbox_x0": 0.0,
                                 "bbox_y0": 0.0,
+                                "bbox_top": 0.0,
                                 "bbox_x1": 0.0,
                                 "bbox_y1": 0.0
                             })
@@ -153,16 +170,23 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
                     chunk_text = " ".join([w["text"] for w in current_words]).strip()
                     if chunk_text:
                         x0 = min(w["x0"] for w in current_words)
-                        y0 = min(w["top"] for w in current_words)
+                        top_y = min(get_word_top(w, page_h) for w in current_words)
                         x1 = max(w["x1"] for w in current_words)
-                        y1 = max(w["bottom"] for w in current_words)
+                        bottom_y = max(get_word_bottom(w, page_h) for w in current_words)
+
+                        norm_x0 = round(float(x0 / page_w), 4)
+                        norm_top = round(float(top_y / page_h), 4)
+                        norm_x1 = round(float(x1 / page_w), 4)
+                        norm_bottom = round(float(bottom_y / page_h), 4)
+
                         chunks_with_meta.append({
                             "text": chunk_text,
                             "page_number": page_number,
-                            "bbox_x0": round(float(x0 / page_w), 4),
-                            "bbox_y0": round(float(y0 / page_h), 4),
-                            "bbox_x1": round(float(x1 / page_w), 4),
-                            "bbox_y1": round(float(y1 / page_h), 4)
+                            "bbox_x0": norm_x0,
+                            "bbox_y0": norm_top,
+                            "bbox_top": norm_top,
+                            "bbox_x1": norm_x1,
+                            "bbox_y1": norm_bottom
                         })
                     current_words = []
                     current_len = 0
@@ -171,16 +195,23 @@ def extract_chunks_with_bboxes(pdf_path, chunk_size=CHUNK_SIZE):
                 chunk_text = " ".join([w["text"] for w in current_words]).strip()
                 if chunk_text:
                     x0 = min(w["x0"] for w in current_words)
-                    y0 = min(w["top"] for w in current_words)
+                    top_y = min(get_word_top(w, page_h) for w in current_words)
                     x1 = max(w["x1"] for w in current_words)
-                    y1 = max(w["bottom"] for w in current_words)
+                    bottom_y = max(get_word_bottom(w, page_h) for w in current_words)
+
+                    norm_x0 = round(float(x0 / page_w), 4)
+                    norm_top = round(float(top_y / page_h), 4)
+                    norm_x1 = round(float(x1 / page_w), 4)
+                    norm_bottom = round(float(bottom_y / page_h), 4)
+
                     chunks_with_meta.append({
                         "text": chunk_text,
                         "page_number": page_number,
-                        "bbox_x0": round(float(x0 / page_w), 4),
-                        "bbox_y0": round(float(y0 / page_h), 4),
-                        "bbox_x1": round(float(x1 / page_w), 4),
-                        "bbox_y1": round(float(y1 / page_h), 4)
+                        "bbox_x0": norm_x0,
+                        "bbox_y0": norm_top,
+                        "bbox_top": norm_top,
+                        "bbox_x1": norm_x1,
+                        "bbox_y1": norm_bottom
                     })
 
     return chunks_with_meta
