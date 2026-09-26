@@ -110,7 +110,8 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
     const left = Math.max(0, Math.min(100, normX0));
     const top = Math.max(0, Math.min(100, normTop));
     const width = Math.max(5, Math.min(100 - left, normX1 - normX0));
-    const height = Math.max(2, Math.min(100 - top, normY1 - normTop));
+    // Clamp height to max 12% to smoothly frame top lines of excerpt without stretching across multiple paragraphs
+    const height = Math.min(Math.max(2, Math.min(100 - top, normY1 - normTop)), 12);
 
     const hasValidBbox = rawX1 > rawX0 && rawY1 > rawTop && width > 0 && height > 0;
     if (!hasValidBbox) return null;
@@ -126,6 +127,7 @@ export default function PdfViewer({ fileUrl, filename, activeCitation, onClose }
           top: `${top}%`,
           width: `${width}%`,
           height: `${height}%`,
+          maxHeight: "14%",
           backgroundColor: "rgba(234, 179, 8, 0.25)",
           border: "2px solid #EAB308",
           borderRadius: "4px",
