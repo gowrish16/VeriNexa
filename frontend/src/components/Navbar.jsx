@@ -91,7 +91,7 @@ export default function Navbar({ onOpenBatchSearch, onOpenAllocation, onOpenAuth
                   onClick={onOpenAllocation}
                   className="px-4 py-2 rounded-full bg-[#2dd4ce] hover:bg-[#26b8b3] text-[#060b10] font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-[#2dd4ce]/20 cursor-pointer"
                 >
-                  <span>Workspace</span>
+                  <span>{user?.is_admin ? "Admin Console" : "Workspace"}</span>
                   <ArrowUpRight className="w-3.5 h-3.5" />
                 </button>
                 <button

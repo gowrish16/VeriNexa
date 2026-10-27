@@ -1,13 +1,22 @@
 import os
 import re
+import asyncio
 from typing import Optional, List, Tuple
 import psycopg2
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
+import hashlib
+import time
 
 load_dotenv()
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Simple in-memory cache for search results
+SEARCH_CACHE = {}
+CACHE_TTL = 300  # 5 minutes
 
 STOP_PATTERNS = [
     r"\bexplain\s+in\s+simple\s+terms\b",
@@ -32,6 +41,28 @@ BOOST_TERMS = [
     "secondary endpoint", "table", "mean", "baseline", "p=", "p <", "p<",
     "confidence interval", "ci", "statistically significant", "randomized"
 ]
+
+
+def generate_cache_key(query: str, top_k: int, paper_id: Optional[int], user_id: Optional[int]) -> str:
+    """Generate a unique cache key for search parameters"""
+    key_str = f"{query}|{top_k}|{paper_id}|{user_id}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def get_cached_result(cache_key: str):
+    """Retrieve cached result if valid"""
+    if cache_key in SEARCH_CACHE:
+        cached_data, timestamp = SEARCH_CACHE[cache_key]
+        if time.time() - timestamp < CACHE_TTL:
+            return cached_data
+        else:
+            del SEARCH_CACHE[cache_key]
+    return None
+
+
+def set_cached_result(cache_key: str, result):
+    """Store result in cache"""
+    SEARCH_CACHE[cache_key] = (result, time.time())
 
 
 def denoise_query(query: str) -> str:
@@ -60,11 +91,17 @@ def load_all_chunks(paper_id: Optional[int] = None, user_id: Optional[int] = Non
     params = []
 
     if paper_id is not None:
-        conditions.append("paper_id = %s")
-        params.append(paper_id)
+        try:
+            pid = int(paper_id)
+            conditions.append("paper_id = %s")
+            params.append(pid)
+        except (ValueError, TypeError):
+            pass
     if user_id is not None:
-        conditions.append("(user_id = %s OR user_id IS NULL)")
+        conditions.append("user_id = %s")
         params.append(user_id)
+    else:
+        conditions.append("1=0")
 
     where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
     query_str = f"""
@@ -80,28 +117,37 @@ def load_all_chunks(paper_id: Optional[int] = None, user_id: Optional[int] = Non
     return rows
 
 
-def get_vector_ranking(query: str, paper_id: Optional[int] = None, user_id: Optional[int] = None):
-    query_embedding = model.encode(query).tolist()
+def get_vector_ranking(query: str, paper_id: Optional[int] = None, user_id: Optional[int] = None, limit: int = 4):
+    safe_limit = max(1, min(int(limit), 100)) if limit is not None else 4
+    query_embedding = model.encode(query, batch_size=1, normalize_embeddings=True).tolist()
     conn = get_connection()
     cursor = conn.cursor()
 
     conditions = []
     params = []
     if paper_id is not None:
-        conditions.append("paper_id = %s")
-        params.append(paper_id)
+        try:
+            pid = int(paper_id)
+            conditions.append("paper_id = %s")
+            params.append(pid)
+        except (ValueError, TypeError):
+            pass
     if user_id is not None:
-        conditions.append("(user_id = %s OR user_id IS NULL)")
+        conditions.append("user_id = %s")
         params.append(user_id)
+    else:
+        conditions.append("1=0")
 
     where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
     params.append(query_embedding)
+    params.append(safe_limit)
 
     query_str = f"""
         SELECT id
         FROM paper_chunks
         {where_clause}
-        ORDER BY embedding <=> %s::vector ASC;
+        ORDER BY embedding <=> %s::vector ASC
+        LIMIT %s;
     """
     cursor.execute(query_str, params)
     ranked_ids = [row[0] for row in cursor.fetchall()]
@@ -129,8 +175,15 @@ def reciprocal_rank_fusion(rankings, k=60):
     return rrf_scores
 
 
-def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None, user_id: Optional[int] = None):
+def hybrid_search(query: str, top_k: int = 4, paper_id: Optional[int] = None, user_id: Optional[int] = None):
+    safe_top_k = max(1, min(int(top_k), 100)) if top_k is not None else 4
     search_query = denoise_query(query)
+
+    # Check cache first
+    cache_key = generate_cache_key(search_query, safe_top_k, paper_id, user_id)
+    cached_result = get_cached_result(cache_key)
+    if cached_result is not None:
+        return cached_result
 
     chunks = load_all_chunks(paper_id=paper_id, user_id=user_id)
     if not chunks:
@@ -151,7 +204,7 @@ def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None, us
     }
     chunk_texts = [c[2] for c in chunks]
 
-    vector_ranking = get_vector_ranking(search_query, paper_id=paper_id, user_id=user_id)
+    vector_ranking = get_vector_ranking(search_query, paper_id=paper_id, user_id=user_id, limit=safe_top_k)
     bm25_ranking = get_bm25_ranking(search_query, chunk_ids, chunk_texts)
 
     fused_scores = reciprocal_rank_fusion([vector_ranking, bm25_ranking])
@@ -174,7 +227,22 @@ def hybrid_search(query: str, top_k: int = 5, paper_id: Optional[int] = None, us
             ))
 
     boosted_results.sort(key=lambda x: x[3], reverse=True)
-    return boosted_results[:top_k]
+    result = boosted_results[:safe_top_k]
+
+    # Cache the result
+    set_cached_result(cache_key, result)
+
+    return result
+
+
+async def async_get_vector_ranking(query: str, paper_id: Optional[int] = None, user_id: Optional[int] = None, limit: int = 4):
+    """Non-blocking async wrapper for get_vector_ranking"""
+    return await asyncio.to_thread(get_vector_ranking, query, paper_id=paper_id, user_id=user_id, limit=limit)
+
+
+async def async_hybrid_search(query: str, top_k: int = 4, paper_id: Optional[int] = None, user_id: Optional[int] = None):
+    """Non-blocking async wrapper for hybrid_search"""
+    return await asyncio.to_thread(hybrid_search, query, top_k=top_k, paper_id=paper_id, user_id=user_id)
 
 
 if __name__ == "__main__":

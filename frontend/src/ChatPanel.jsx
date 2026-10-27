@@ -6,13 +6,68 @@ function ChatPanel({
   sessionMessages = [],
   onSessionCreated,
   onSelectSource,
+  onOpenPdf,
+  onSelectCitation,
   onOpenAuth,
 }) {
   const { isAuthenticated, authFetch } = useAuth();
   const [messages, setMessages] = useState(sessionMessages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [currentNode, setCurrentNode] = useState(null);
   const scrollRef = useRef(null);
+
+  const handleViewAnchor = (c) => {
+    const pageNum = Number(c.page_num ?? c.page_number ?? c.page ?? 1);
+    const bbox =
+      Array.isArray(c.bbox) && c.bbox.length === 4
+        ? c.bbox.map(Number)
+        : [
+            Number(c.bbox_x0 ?? 0),
+            Number(c.bbox_y0 ?? c.bbox_top ?? 0),
+            Number(c.bbox_x1 ?? 0),
+            Number(c.bbox_y1 ?? 0),
+          ];
+    const docId = c.doc_id || c.filename || "medi.pdf";
+    const filename = c.filename || c.doc_id || "medi.pdf";
+
+    const citationPayload = {
+      ...c,
+      page: pageNum,
+      page_num: pageNum,
+      page_number: pageNum,
+      bbox: bbox,
+      bbox_x0: bbox[0],
+      bbox_y0: bbox[1],
+      bbox_top: bbox[1],
+      bbox_x1: bbox[2],
+      bbox_y1: bbox[3],
+      doc_id: docId,
+      filename: filename,
+      title: c.title || docId,
+    };
+
+    if (onSelectSource) {
+      onSelectSource(citationPayload);
+    }
+    if (onOpenPdf) {
+      onOpenPdf(filename, citationPayload);
+    }
+    if (onSelectCitation) {
+      onSelectCitation(citationPayload);
+    }
+  };
+
+  // Helper function to display node names in user-friendly format
+  const getNodeDisplayName = (nodeName) => {
+    const nodeNames = {
+      "retrieve_chunks": "Searching literature corpus...",
+      "generate_prompt": "Building context prompt...",
+      "generate_answer": "Synthesizing response...",
+      "save": "Persisting audit record..."
+    };
+    return nodeNames[nodeName] || nodeName;
+  };
 
   // Sync messages whenever parent's active session changes
   useEffect(() => {
@@ -45,8 +100,17 @@ function ChatPanel({
     setInput("");
     setLoading(true);
 
+    // Create temporary assistant message for streaming
+    const tempAssistantMsg = {
+      role: "assistant",
+      content: "",
+      citations: [],
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempAssistantMsg]);
+
     try {
-      const res = await authFetch("http://127.0.0.1:8000/api/chat", {
+      const response = await authFetch("http://127.0.0.1:8000/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -55,35 +119,88 @@ function ChatPanel({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || "Error querying papers");
+      if (!response.ok) {
+        throw new Error("Error querying papers");
       }
 
-      const assistantMsg = {
-        role: "assistant",
-        content: data.answer,
-        citations: data.citations || [],
-        timestamp: new Date().toISOString(),
-      };
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let fullAnswer = "";
+      let citations = [];
+      let buffer = "";
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      if (!activeSessionId && data.session_id && onSessionCreated) {
-        onSessionCreated(data.session_id);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(trimmed.slice(6));
+
+              // Handle node lifecycle events
+              if (data.type === "node_lifecycle") {
+                setCurrentNode(data.node);
+              }
+
+              // Handle token streaming
+              if (data.type === "token" || (data.token !== undefined && !data.done)) {
+                fullAnswer += data.token;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    content: fullAnswer,
+                  };
+                  return updated;
+                });
+              }
+
+              // Handle completion
+              if (data.type === "done" || data.done) {
+                citations = data.citations || [];
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    content: fullAnswer,
+                    citations: citations,
+                  };
+                  return updated;
+                });
+
+                if (!activeSessionId && data.session_id && onSessionCreated) {
+                  onSessionCreated(data.session_id);
+                }
+              }
+
+              // Handle errors
+              if (data.type === "error") {
+                throw new Error(data.error);
+              }
+            } catch (e) {
+              console.error("Error parsing SSE data:", e);
+            }
+          }
+        }
       }
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
           content: "Audit error: " + err.message,
-          citations: [],
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+        };
+        return updated;
+      });
     } finally {
       setLoading(false);
+      setCurrentNode(null);
     }
   };
 
@@ -140,7 +257,7 @@ function ChatPanel({
                   {msg.citations.map((c, cIdx) => (
                     <div
                       key={cIdx}
-                      onClick={() => onSelectSource && onSelectSource(c)}
+                      onClick={() => handleViewAnchor(c)}
                       className="rounded p-2 text-xs border cursor-pointer hover:opacity-90 transition flex flex-col gap-1"
                       style={{
                         background: "rgba(11, 19, 27, 0.8)",
@@ -149,10 +266,17 @@ function ChatPanel({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-[10px] font-semibold" style={{ color: "var(--teal)" }}>
-                          📄 {c.title || c.filename} (Chunk #{c.chunk_index})
+                          📄 {c.title || c.filename || c.doc_id} (Chunk #{c.chunk_index ?? c.chunk_id ?? cIdx + 1})
                         </span>
-                        <span className="font-mono text-[9px] underline" style={{ color: "var(--amber)" }}>
-                          View Source →
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleViewAnchor(c);
+                          }}
+                          className="font-mono text-[9px] underline cursor-pointer"
+                          style={{ color: "var(--amber)" }}
+                        >
+                          View Anchor →
                         </span>
                       </div>
                       <p className="text-[11px] italic leading-snug line-clamp-2" style={{ color: "var(--text-secondary)" }}>
@@ -169,7 +293,14 @@ function ChatPanel({
         {loading && (
           <div className="rounded p-3 text-xs font-mono flex items-center gap-2" style={{ background: "var(--surface)", color: "var(--teal)" }}>
             <span className="hud-pulse" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--teal)" }} />
-            Analyzing literature and synthesizing biomedical claims...
+            {currentNode ? (
+              <span className="flex items-center gap-2">
+                <span className="text-[#8fa89b]">🤖</span>
+                <span>{getNodeDisplayName(currentNode)}</span>
+              </span>
+            ) : (
+              <span>Analyzing literature and synthesizing biomedical claims...</span>
+            )}
           </div>
         )}
       </div>

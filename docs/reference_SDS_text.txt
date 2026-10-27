@@ -1,0 +1,424 @@
+=== PAGE 1 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, 
+MANGALURU 
+DEPARTMENT OF MCA 
+ 
+SOFTWARE DESIGN SPECIFICATION 
+CLASSIFYING NEWS ARTICLES BASED ON THEIR 
+HEADLINES USING MACHINE LEARNING 
+ 
+Prepared by 
+Bhavish L Shetty 
+USN: 4JK25MC019 
+Project Guide 
+Dr. Bruce Mathew 
+Master of Computer Applications (MCA) 
+Academic Year 2026–2027 
+
+
+=== PAGE 2 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page ii 
+TABLE OF CONTENTS 
+1. System Design .............................................................................................................................. 1 
+1.1 Architectural Design ............................................................................................................. 1 
+1.1.1 System Context Diagram ............................................................................................ 1 
+1.1.2 End-to-End ML Pipeline ............................................................................................. 2 
+2. Detailed Design ............................................................................................................................ 3 
+2.1 Dataset Design ...................................................................................................................... 3 
+2.1.1 Dataset Provenance and Permissions ........................................................................... 3 
+2.1.2 Dataset Schema and Data Dictionary ........................................................................... 3 
+2.1.3 Target / Label Definition ............................................................................................. 3 
+2.1.4 Partitioning and Leakage Prevention ........................................................................... 4 
+2.2 Preprocessing and Feature Engineering ................................................................................. 4 
+2.2.1 Validation and Cleaning .............................................................................................. 4 
+2.2.2 Feature Selection / Extraction...................................................................................... 4 
+2.3 Model Design ....................................................................................................................... 5 
+2.3.1 Baseline and Candidate Models................................................................................... 5 
+2.3.2 Model Architecture ..................................................................................................... 6 
+2.4 Database Design ................................................................................................................... 7 
+2.4.1 ER Diagram / Storage Architecture ............................................................................. 7 
+2.4.2 Schema ....................................................................................................................... 7 
+2.5 UML and Behavioral Design ................................................................................................ 8 
+2.5.1 Use Case Diagram ...................................................................................................... 8 
+2.5.2 Class / Component Diagram ........................................................................................ 9 
+2.5.3 Sequence Diagram .................................................................................................... 10 
+2.5.4 Activity Diagram ...................................................................................................... 11 
+2.6 User Interface Design ......................................................................................................... 12 
+3. References .................................................................................................................................. 13 
+
+
+=== PAGE 3 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 1 
+1. System Design 
+The proposed system is a web-based machine learning application that classifies news headlines into 
+four categories: POLITICS, SPORTS, BUSINESS and ENTERTAINMENT. It uses Natural Language 
+Processing (NLP), TF-IDF feature extraction and the LinearSVC classification algorithm. 
+1.1 Architectural Design 
+The application has three main parts: the React frontend, the Python Flask backend and the machine 
+learning model. SQLite is used for application data storage. The frontend accepts a headline and 
+displays the prediction. The backend processes the request and communicates with the trained model. 
+1.1.1 System Context Diagram 
+Figure 1 shows the main external user, dataset and application components and how they exchange 
+information. 
+ 
+Figure 1: System Context Diagram 
+ 
+The user enters a headline through the frontend. The frontend sends it to Flask. The backend applies the 
+same text preparation and TF-IDF transformation used during training. LinearSVC predicts a category 
+
+
+=== PAGE 4 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 2 
+and the backend returns the result to the frontend. SQLite is used for stored application information and 
+prediction history. 
+1.1.2 End-to-End ML Pipeline 
+The pipeline describes the steps from dataset preparation to prediction of a new headline. 
+ 
+Figure 2: End-to-End ML Pipeline 
+ 
+The dataset is checked and cleaned first. TF-IDF converts text into numerical features. The data is 
+divided into training and testing portions. LinearSVC is trained and evaluated. For a new headline, the 
+same preprocessing and fitted TF-IDF transformation are applied before prediction. 
+
+
+=== PAGE 5 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 3 
+2. Detailed Design 
+2.1 Dataset Design 
+The project uses the Kaggle News Category Dataset. The selected dataset contains headline text and 
+category labels. The current project interface displays 20,000 records, with 5,000 records in each of the 
+four selected categories. 
+2.1.1 Dataset Provenance and Permissions 
+Table 1: Dataset provenance record 
+Item 
+Details 
+Dataset name 
+News Category Dataset 
+Source 
+Kaggle 
+Dataset type 
+News headline dataset 
+Records displayed 
+20,000 
+Selected categories 
+POLITICS, SPORTS, BUSINESS, ENTERTAINMENT 
+Prepared format 
+CSV 
+Intended use 
+Academic news headline classification 
+Collection period 
+To be confirmed from dataset source 
+Licence / permission 
+Verify the licence on the original Kaggle dataset page 
+ 
+The dataset is used for academic classification. The original dataset licence and collection period should 
+be checked from the Kaggle source before final submission. 
+2.1.2 Dataset Schema and Data Dictionary 
+Table 2: Dataset schema and data dictionary 
+Field 
+Type 
+Meaning 
+Example 
+headline 
+Text 
+News headline text 
+Team wins the final match 
+category 
+Text 
+Correct category label 
+SPORTS 
+ 
+The headline field is the input text. The category field is the target label used by the model during 
+training. 
+2.1.3 Target / Label Definition 
+Table 3: Target label definitions 
+Label 
+Description 
+POLITICS 
+Government, elections and political activities 
+SPORTS 
+Sports, players and competitions 
+BUSINESS 
+Companies, markets and business activities 
+ENTERTAINMENT 
+Movies, celebrities and entertainment 
+ 
+
+
+=== PAGE 6 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 4 
+The category column is the target variable. The dataset already contains category labels, which are used 
+as the correct classes during supervised model training. The annotation process used to create the 
+original labels is not specified in the supplied SRS. 
+2.1.4 Partitioning and Leakage Prevention 
+Table 4: Training and testing partition 
+Partition 
+Percentage 
+Records 
+Training 
+80% 
+16,000 
+Testing 
+20% 
+4,000 
+Total 
+100% 
+20,000 
+ 
+The training data is used to learn the model. The testing data is used to measure performance on unseen 
+records. Duplicate or overlapping records should be checked to reduce data leakage. The TF-IDF 
+vectorizer should be fitted only on training data and then reused unchanged for testing and prediction. 
+Confirm the exact split and stratification settings in the project code. 
+2.2 Preprocessing and Feature Engineering 
+Preprocessing prepares headline text before it is passed to the classification model. It helps make the 
+text consistent and removes content that is not useful for classification. 
+2.2.1 Validation and Cleaning 
+• Data validation checks that the required headline and category fields are present. 
+• Missing-value handling identifies and treats records with missing values. 
+• Duplicate checking identifies repeated records. 
+• Text cleaning removes unnecessary characters and symbols. 
+• Text normalization makes the text consistent. 
+• Tokenization divides a headline into individual words. 
+• Stop-word removal may remove common words when appropriate. 
+Example: “The Team Wins The Final Match!” becomes “team wins final match” after a simple cleaning 
+process. The exact cleaning operations should match the implementation. 
+2.2.2 Feature Selection / Extraction 
+The project uses TF-IDF (Term Frequency–Inverse Document Frequency). It converts cleaned headline 
+text into numerical values so the machine learning algorithm can process it. The interface shows a 
+maximum of 12,000 features. 
+
+
+=== PAGE 7 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 5 
+Table 5: TF-IDF feature extraction parameters 
+Parameter 
+Project detail 
+Technique 
+TF-IDF 
+Maximum features displayed 
+12,000 
+Input 
+Cleaned news headlines 
+Output 
+Numerical feature vectors 
+Purpose 
+Represent text in a form the classifier can process 
+ 
+The fitted TF-IDF transformation used during training must also be used for testing and new user 
+headlines. 
+2.3 Model Design 
+The machine learning model learns patterns between headline text and category labels. TF-IDF is used 
+to extract features, and LinearSVC is the primary classification algorithm shown in the project interface. 
+2.3.1 Baseline and Candidate Models 
+Table 6: Primary and comparison models 
+Algorithm 
+Role 
+LinearSVC 
+Primary classification model 
+Logistic Regression 
+Comparison model 
+Multinomial Naive Bayes 
+Comparison model 
+ 
+LinearSVC is selected as the primary model because it is suitable for text classification with high-
+dimensional TF-IDF features. Logistic Regression and Multinomial Naive Bayes are shown as 
+comparison models in the evaluation dashboard. 
+
+
+=== PAGE 8 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 6 
+2.3.2 Model Architecture 
+ 
+Figure 3: LinearSVC Model Architecture 
+ 
+The headline is cleaned and converted into TF-IDF features. LinearSVC uses the feature vector to select 
+one of the four target categories. The system then displays the predicted category. 
+Table 7: Displayed model evaluation results 
+Metric 
+Value shown in dashboard 
+Accuracy 
+85.05% 
+Macro Precision 
+85.11% 
+Macro Recall 
+85.05% 
+Macro F1-score 
+85.07% 
+ 
+These values are copied from the supplied project dashboard. They are reported interface values and 
+have not been independently recomputed for this document. 
+2.4 Database Design 
+The current project interface identifies SQLite as the database. SQLite is a lightweight database used to 
+store application information. The Prediction History page is designed to display previously classified 
+headlines. 
+
+
+=== PAGE 9 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 7 
+2.4.1 ER Diagram / Storage Architecture 
+ 
+Figure 4: Database Storage Architecture 
+ 
+The backend can save prediction records in SQLite and retrieve them for the Prediction History page. 
+The supplied screenshot currently shows zero records. 
+2.4.2 Schema 
+The exact SQLite table definition was not included in the supplied SRS or screenshots. The following 
+is a proposed logical description for a prediction-history record and must be checked against the actual 
+database before submission. 
+Table 8: Proposed prediction-history record 
+Field 
+Suggested type 
+Description 
+id 
+Integer 
+Unique record identifier 
+headline 
+Text 
+Headline entered by the user 
+predicted_category 
+Text 
+Predicted news category 
+created_at 
+Date/Time 
+Date and time of prediction 
+ 
+2.5 UML and Behavioral Design 
+UML diagrams explain the main activities and the communication between the user and the system 
+components. 
+
+
+=== PAGE 10 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 8 
+2.5.1 Use Case Diagram 
+ 
+Figure 5: Use Case Diagram 
+ 
+
+
+=== PAGE 11 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 9 
+The user enters headlines, requests predictions, clears input and views the available project pages. The 
+student/developer prepares the dataset, trains the model and evaluates its performance. 
+Table 9: Use case descriptions 
+Use case 
+Description 
+Enter headline 
+User enters a news headline. 
+Predict category 
+System predicts one of the four categories. 
+View result 
+Displays the predicted category. 
+Clear input 
+Clears the entered headline. 
+View dashboard 
+Displays model evaluation results. 
+View workflow 
+Displays the ML pipeline and modules. 
+View dataset EDA 
+Displays dataset information and sample records. 
+View history 
+Displays available stored prediction records. 
+About project 
+Displays project details and technologies. 
+Prepare / train 
+Developer prepares data and trains/evaluates the model. 
+ 
+2.5.2 Class / Component Diagram 
+ 
+Figure 6: Component Diagram 
+ 
+
+
+=== PAGE 12 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 10 
+React provides the project pages. Flask handles requests and connects the frontend to the machine 
+learning components. The preprocessing, TF-IDF and LinearSVC components perform classification. 
+SQLite supports storage of application records. 
+2.5.3 Sequence Diagram 
+ 
+Figure 7: Sequence Diagram for Prediction 
+ 
+The user submits a headline. The frontend sends it to Flask. The backend validates and preprocesses it, 
+transforms it with TF-IDF and obtains a prediction from LinearSVC. Where prediction logging is 
+enabled, the result is stored in SQLite. The backend returns the result to the frontend. 
+
+
+=== PAGE 13 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 11 
+2.5.4 Activity Diagram 
+ 
+Figure 8: Activity Diagram 
+ 
+If the input is empty or invalid, the application should display a validation message. For valid input, it 
+performs preprocessing, TF-IDF transformation and prediction. The predicted category is then 
+displayed. 
+
+
+=== PAGE 14 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 12 
+2.6 User Interface Design 
+The web interface is designed to be simple and easy to use. It contains six main pages. The supplied 
+screenshot below shows the current project interface. 
+The main page accepts a headline, provides sample headlines, allows model selection and provides 
+Predict News Category and Clear Input actions. 
+ 
+Figure 9: Headline Classifier Interface 
+ 
+
+
+=== PAGE 15 ===
+A.J. INSTITUTE OF ENGINEERING & TECHNOLOGY, MANGALURU | DEPARTMENT OF MCA 
+News Headline Classification – SDS 
+Page 13 
+3. References 
+1. 
+T. Ibragimov and S. Kabdrakhova, “Classifying News Articles Based on Their Headlines Using 
+Machine Learning Algorithms,” Universum: Technical Sciences, No. 5 (134), 2025. 
+2. 
+“News Classification Based on Their Headlines: A Review,” IEEE INMIC, 2014. DOI: 
+10.1109/INMIC.2014.7097339. 
+3. 
+“News Topic Classification Using Machine Learning Techniques,” Lecture Notes in Electrical 
+Engineering, Vol. 733, 2021. 
+4. 
+Kaggle, News Category Dataset. Dataset source used for news headline classification. 
+5. 
+Scikit-learn documentation – TF-IDF Vectorizer and LinearSVC. 
+6. 
+Python and Flask documentation. 
+7. 
+React.js documentation. 
+8. 
+SQLite documentation. 
+9. 
+A.J. Institute of Engineering & Technology, Department of MCA, Software Design 
+Specification Format for ML Projects. 
+END OF SOFTWARE DESIGN SPECIFICATION 
+
+

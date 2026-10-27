@@ -183,3 +183,37 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #2dd4ce;
 }
+
+/* PDF Canvas & Citation Highlight Stacking Hierarchy */
+.react-pdf__Page {
+  position: relative !important;
+}
+
+.react-pdf__Page__canvas {
+  position: relative !important;
+  z-index: 0 !important;
+  margin: 0 auto !important;
+  display: block !important;
+  max-width: none !important;
+  image-rendering: -webkit-optimize-contrast !important;
+  image-rendering: crisp-edges !important;
+  text-rendering: geometricPrecision !important;
+}
+
+.react-pdf__Page__textContent {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  z-index: 1 !important;
+}
+
+.react-pdf__Page__annotations {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  z-index: 2 !important;
+}
+
+#citation-highlight-overlay {
+  z-index: 10 !important;
+}

@@ -58,8 +58,13 @@ export function AuthProvider({ children }) {
 
       localStorage.setItem("verilit_token", data.access_token);
       setToken(data.access_token);
-      setUser(data.user);
-      return { success: true };
+      const isAdm = Boolean(data.is_admin ?? data.user?.is_admin ?? false);
+      const updatedUser = {
+        ...data.user,
+        is_admin: isAdm
+      };
+      setUser(updatedUser);
+      return { success: true, is_admin: isAdm, user: updatedUser };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -111,6 +116,7 @@ export function AuthProvider({ children }) {
         token,
         user,
         isAuthenticated: !!token && !!user,
+        isAdmin: Boolean(user?.is_admin),
         loading,
         login,
         register,

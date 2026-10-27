@@ -1,0 +1,63 @@
+# VeriNexa Autonomous Engineering & Quality Guardrails (.cursorrules)
+# Version: 1.0.0 | Academic & Clinical Trial Governance Grade
+
+# ==============================================================================
+# SECTION 1: ARCHITECTURAL GUARDRAILS
+# ==============================================================================
+
+1. ZERO-DATA-EGRESS PRIVACY MOAT:
+   - VeriNexa enforces a strict Zero-Data-Egress architecture for HIPAA and GDPR compliance in biomedical and clinical trial environments.
+   - Strictly NO calls to external proprietary LLM APIs (OpenAI, Anthropic Claude, Google Gemini, Cohere, etc.).
+   - All text generation and reasoning must execute exclusively via the local Ollama instance (default: http://127.0.0.1:11434).
+   - All dense vector embeddings must be computed using local SentenceTransformers (`all-MiniLM-L6-v2`) in strict offline mode (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`).
+
+2. STRICT 384-D PGVECTOR SCHEMA IMMUTABILITY:
+   - The PostgreSQL pgvector embedding dimensionality is fixed at exactly 384 dimensions matching MiniLM-L6-v2.
+   - Vector columns (`paper_chunks.embedding`) and HNSW index specifications must NEVER be modified or resized without a full migration protocol.
+   - Vector distance queries must strictly utilize the cosine distance operator: `<=> %s::vector`.
+
+3. DETERMINISTIC SPATIAL COORDINATE MATH:
+   - All PDF bounding boxes (`bbox_x0`, `bbox_y0`, `bbox_x1`, `bbox_y1`) must be normalized as ratios in the range [0.0, 1.0] relative to page width and height.
+   - PDF coordinate transformations must never output negative or > 1.0 values.
+   - Coordinate extraction is essential for deep-linking PDF reader highlighting; changes to spatial geometry formulas are strictly prohibited.
+
+# ==============================================================================
+# SECTION 2: CODING & API STANDARDS
+# ==============================================================================
+
+1. STRICT TYPE HINTS & SCHEMA VALIDATION:
+   - All FastAPI endpoints must specify complete Python type annotations for arguments and return types.
+   - All request bodies and JSON responses must be governed by Pydantic v2 schemas (`BaseModel` with explicit field validations).
+   - Query and path parameters must specify bounds (e.g., `Query(..., ge=1, le=100)`).
+
+2. STRUCTURED EXCEPTION HANDLING:
+   - Never use bare `except:` or silent `pass` in security, parsing, or database layers.
+   - Never leak raw 500 Internal Server Errors or database tracebacks to the client.
+   - Return RFC 7807 structured HTTP error responses with appropriate HTTP status codes:
+     * 400 Bad Request: Malformed JSON, non-PDF file upload, missing parameters.
+     * 401 Unauthorized: Missing or invalid JWT Bearer token.
+     * 403 Forbidden: Cross-tenant data access violation.
+     * 404 Not Found: Paper, chunk, or session not found.
+     * 422 Unprocessable Entity: Non-biomedical paper rejection, corrupt/unparseable PDF.
+     * 503 Service Unavailable: Ollama offline or PostgreSQL connection pool exhausted.
+
+3. TENANT ISOLATION:
+   - All database queries involving user data must enforce tenant isolation predicates: `WHERE user_id = %s`.
+   - Admin routes must strictly require the `is_admin_user` dependency.
+
+# ==============================================================================
+# SECTION 3: AUTOMATED TESTING & QUALITY REQUIREMENTS
+# ==============================================================================
+
+1. TEST SUITE COMPLETION:
+   - Every new route, LangGraph node, or database utility must have corresponding unit and integration tests under `backend/tests/`.
+   - Tests must run cleanly with `pytest backend/tests/`.
+
+2. ADVERSARIAL RESILIENCE:
+   - Endpoints must withstand prompt injection attacks without hallucinating unverified claims.
+   - PDF upload endpoints must cleanly reject 0-byte files, corrupted byte streams, and password-protected files without server crashes.
+   - Search endpoints must sanitize inputs against SQL injection and out-of-range pagination/top-k parameters.
+
+3. CONCURRENCY RESILIENCE:
+   - Database operations must utilize pooled connections or safe connection contexts to prevent `OperationalError: too many connections`.
+   - Streaming SSE endpoints must release database connections prior to awaiting Ollama token streams.

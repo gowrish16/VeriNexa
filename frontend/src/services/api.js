@@ -9,21 +9,26 @@ function getAuthHeaders() {
   return headers;
 }
 
-// 1. GET /papers
+// 1. GET /documents (alias /papers) - User-Isolated Literature Retrieval
 export async function fetchPapers() {
   try {
-    const res = await fetch(`${API_BASE_URL}/papers`, {
+    const res = await fetch(`${API_BASE_URL}/documents`, {
       method: "GET",
       headers: getAuthHeaders(),
     });
+    if (res.status === 401) {
+      return [];
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    return data.papers || [];
+    return data.documents || data.papers || [];
   } catch (err) {
-    console.warn("Backend /papers unavailable:", err.message);
+    console.warn("Backend /documents unavailable:", err.message);
     return [];
   }
 }
+
+export const fetchDocuments = fetchPapers;
 
 // 2. POST /upload
 export async function uploadPaper(file, title) {
@@ -42,8 +47,13 @@ export async function uploadPaper(file, title) {
 
   const data = await res.json();
   if (res.status === 422 || data.status === "rejected") {
-    const msg = data.detail?.message || data.message || "This document does not appear to be a biomedical research paper.";
-    const details = data.detail?.details || data.details || "";
+    const msg =
+      typeof data.detail === "string"
+        ? data.detail
+        : data.detail?.message ||
+          data.message ||
+          "Document rejected: Not a recognized biomedical or clinical trial paper. Please upload clinical research literature.";
+    const details = typeof data.detail === "object" ? data.detail?.details || "" : "";
     const err = new Error(msg);
     err.details = details;
     err.isRejected = true;
@@ -59,8 +69,11 @@ export async function uploadPaper(file, title) {
 }
 
 // 3. GET /compare?query=...
-export async function comparePapers(query) {
-  const url = `${API_BASE_URL}/compare?query=${encodeURIComponent(query)}`;
+export async function comparePapers(query, paperIds = null) {
+  let url = `${API_BASE_URL}/compare?query=${encodeURIComponent(query)}`;
+  if (paperIds && Array.isArray(paperIds) && paperIds.length > 0) {
+    url += `&paper_ids=${encodeURIComponent(paperIds.join(","))}`;
+  }
   const res = await fetch(url, {
     method: "GET",
     headers: getAuthHeaders(),

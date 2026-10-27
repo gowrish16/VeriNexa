@@ -10,7 +10,7 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 def get_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
-def vector_search(query, top_k=5):
+def vector_search(query, top_k=3):
     query_embedding = model.encode(query).tolist()
 
     conn = get_connection()

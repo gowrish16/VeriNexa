@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  HelpCircle,
   RefreshCw,
   Layers,
   ChevronRight,
@@ -25,6 +26,8 @@ import { AuthProvider, useAuth } from "./AuthContext";
 import LandingPage from "./LandingPage";
 import UploadPage from "./UploadPage";
 import LoginModal from "./LoginModal";
+import AdminDashboard from "./AdminDashboard";
+import ResetPasswordPage from "./ResetPasswordPage";
 import HistorySidebar from "./components/HistorySidebar";
 import PdfViewer from "./components/PdfViewer";
 import ChatPanel from "./components/ChatPanel";
@@ -39,8 +42,17 @@ import {
 } from "./services/api";
 
 function Workspace() {
-  const { user, logout, isAuthenticated } = useAuth();
-  const [screen, setScreen] = useState("landing"); // "landing" | "upload" | "dashboard"
+  const { user, logout, isAuthenticated, loading } = useAuth();
+  const [screen, setScreen] = useState(() => {
+    if (typeof window !== "undefined") {
+      const p = window.location.pathname.toLowerCase();
+      if (p.startsWith("/reset-password")) return "reset-password";
+      if (p.startsWith("/admin")) return "admin";
+      if (p.startsWith("/dashboard")) return "dashboard";
+      if (p.startsWith("/upload")) return "upload";
+    }
+    return "landing";
+  });
 
   // Auth Modal State
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -63,6 +75,8 @@ function Workspace() {
 
   // Compare Across Papers State
   const [compareQuery, setCompareQuery] = useState("");
+  const [comparePaper1Id, setComparePaper1Id] = useState("");
+  const [comparePaper2Id, setComparePaper2Id] = useState("");
   const [comparing, setComparing] = useState(false);
   const [compareResult, setCompareResult] = useState(null);
 
@@ -86,33 +100,149 @@ function Workspace() {
     setLoadingPapers(true);
     try {
       const data = await fetchPapers();
-      setPapers(data);
-      if (data.length > 0 && !selectedPaper) {
-        setSelectedPaper(data[0]);
-        if (data[0].filename) {
-          openPdf(data[0].filename, data[0]);
+      setPapers(data || []);
+      if (data && data.length > 0) {
+        if (!integrityPaperId) {
+          setIntegrityPaperId(data[0].id || data[0].paper_id);
         }
+        if (!selectedPaper) {
+          setSelectedPaper(data[0]);
+          if (data[0].filename && !selectedPdfUrl) {
+            openPdf(data[0].filename, data[0]);
+          }
+        }
+        setComparePaper1Id((prev) => prev || String(data[0].id || data[0].paper_id));
+        setComparePaper2Id((prev) => {
+          if (prev) return prev;
+          const second = data.length > 1 ? data[1] : data[0];
+          return String(second.id || second.paper_id);
+        });
       }
-      if (data.length > 0 && !integrityPaperId) {
-        setIntegrityPaperId(data[0].id || data[0].paper_id);
-      }
+      return data || [];
     } catch (err) {
       console.warn("Failed to load papers:", err);
+      setPapers([]);
+      return [];
     } finally {
       setLoadingPapers(false);
     }
   };
 
   useEffect(() => {
-    loadPapers();
-  }, []);
+    if (isAuthenticated) {
+      loadPapers();
+    } else {
+      setPapers([]);
+      setSelectedPaper(null);
+      setSelectedPdfUrl(null);
+      setActiveCitation(null);
+      setComparePaper1Id("");
+      setComparePaper2Id("");
+    }
+  }, [isAuthenticated, user?.id]);
+
+  useEffect(() => {
+    if (selectedPaper?.id) {
+      setIntegrityPaperId(selectedPaper.id);
+    }
+  }, [selectedPaper]);
 
   // Open PDF in Left Viewer
   const openPdf = (filename, paperObj = null, citationObj = null) => {
-    if (paperObj) setSelectedPaper(paperObj);
-    const url = getPdfFileUrl(filename);
-    setSelectedPdfUrl(url);
-    setActiveCitation(citationObj || null);
+    // Discern citation vs paperObj if 2nd arg was citationObj
+    const isSecondArgCitation =
+      paperObj &&
+      (paperObj.bbox ||
+        paperObj.page ||
+        paperObj.page_num ||
+        paperObj.page_number ||
+        paperObj.snippet ||
+        paperObj.chunk_id ||
+        paperObj.chunk_index);
+
+    const citation = citationObj || (isSecondArgCitation ? paperObj : null);
+    const passedPaper = isSecondArgCitation ? null : paperObj;
+
+    const targetPaperId = citation?.paper_id || passedPaper?.id || passedPaper?.paper_id;
+    const targetFilename =
+      filename ||
+      passedPaper?.filename ||
+      citation?.filename ||
+      citation?.doc_id ||
+      selectedPaper?.filename;
+
+    const matchedPaper =
+      passedPaper ||
+      (targetPaperId
+        ? papers.find(
+            (p) =>
+              p.id === targetPaperId ||
+              p.paper_id === targetPaperId ||
+              String(p.id) === String(targetPaperId)
+          )
+        : null) ||
+      (targetFilename
+        ? papers.find(
+            (p) =>
+              p.filename === targetFilename ||
+              p.title === targetFilename ||
+              (p.filename &&
+                targetFilename &&
+                p.filename.toLowerCase() === targetFilename.toLowerCase()) ||
+              (p.filename &&
+                targetFilename &&
+                targetFilename.toLowerCase().includes(p.filename.toLowerCase()))
+          )
+        : null) ||
+      selectedPaper;
+
+    if (matchedPaper) {
+      setSelectedPaper(matchedPaper);
+      if (matchedPaper.id || matchedPaper.paper_id) {
+        setIntegrityPaperId(matchedPaper.id || matchedPaper.paper_id);
+      }
+    }
+
+    const actualFilename = matchedPaper?.filename || targetFilename;
+    if (actualFilename) {
+      const url = getPdfFileUrl(actualFilename);
+      setSelectedPdfUrl(url);
+    }
+
+    if (citation) {
+      const pageNum = Number(
+        citation.page_num ?? citation.page_number ?? citation.page ?? 1
+      );
+      const bbox =
+        Array.isArray(citation.bbox) && citation.bbox.length === 4
+          ? citation.bbox.map(Number)
+          : [
+              Number(citation.bbox_x0 ?? 0),
+              Number(citation.bbox_y0 ?? citation.bbox_top ?? 0),
+              Number(citation.bbox_x1 ?? 0),
+              Number(citation.bbox_y1 ?? 0),
+            ];
+      const docId = citation.doc_id || citation.filename || actualFilename;
+
+      const normalizedCitation = {
+        ...citation,
+        paper_id: matchedPaper?.id || matchedPaper?.paper_id || targetPaperId,
+        page: pageNum,
+        page_num: pageNum,
+        page_number: pageNum,
+        bbox: bbox,
+        bbox_x0: bbox[0],
+        bbox_y0: bbox[1],
+        bbox_top: bbox[1],
+        bbox_x1: bbox[2],
+        bbox_y1: bbox[3],
+        doc_id: docId,
+        filename: actualFilename || docId,
+      };
+      setActiveCitation(normalizedCitation);
+    } else {
+      setActiveCitation(null);
+    }
   };
 
   // Load Past Audit Session
@@ -156,9 +286,13 @@ function Workspace() {
         openPdf(res.filename, { id: res.paper_id, filename: res.filename, title: res.title });
       }
     } catch (err) {
+      const isRejection = err.statusCode === 422 || err.isRejected;
       setUploadFeedback({
         type: "error",
-        text: `Upload failed: ${err.message}${err.details ? ` (${err.details})` : ""}`,
+        isRejection,
+        text: isRejection
+          ? (err.message || "Document rejected: Not a recognized biomedical or clinical trial paper. Please upload clinical research literature.")
+          : `Upload failed: ${err.message}${err.details ? ` (${err.details})` : ""}`,
       });
     } finally {
       setUploadingDash(false);
@@ -179,12 +313,16 @@ function Workspace() {
     setCompareResult(null);
 
     try {
-      const res = await comparePapers(compareQuery.trim());
+      const p1 = comparePaper1Id || (papers.length > 0 ? (papers[0].id || papers[0].paper_id) : null);
+      const p2 = comparePaper2Id || (papers.length > 1 ? (papers[1].id || papers[1].paper_id) : p1);
+      const targetIds = p1 && p2 ? [Number(p1), Number(p2)] : (Array.isArray(papers) ? papers.map((p) => p.id) : null);
+      const res = await comparePapers(compareQuery.trim(), targetIds);
       setCompareResult(res);
     } catch (err) {
+      console.error("Compare failed:", err);
       setCompareResult({
-        verdict: "VERDICT: CONTRADICT",
-        analysis: `Error during cross-paper query: ${err.message}`,
+        verdict: "VERDICT: INSUFFICIENT DATA",
+        analysis: `Comparison failed: ${err.message}. Ensure backend is running.`,
       });
     } finally {
       setComparing(false);
@@ -205,7 +343,7 @@ function Workspace() {
     setIntegrityResult(null);
 
     try {
-      const targetId = integrityPaperId || (papers[0] && papers[0].id) || 1;
+      const targetId = integrityPaperId || selectedPaper?.id || (papers[0] && papers[0].id) || 1;
       const res = await checkIntegrity(targetId, integrityTopic.trim());
       setIntegrityResult(res);
     } catch (err) {
@@ -218,53 +356,157 @@ function Workspace() {
     }
   };
 
-  // Parse Verdict string into clean badge label & explanation text
-  const parseVerdictInfo = (rawVerdict, fallbackText = "") => {
-    if (!rawVerdict) {
-      return { label: "VERDICT: UNCLEAR", type: "unclear", reason: fallbackText };
-    }
+  // Helper to render markdown bold syntax **bold** cleanly
+  const renderInlineMarkdown = (text) => {
+    if (!text) return null;
+    const parts = text.split(/(\*\*[^*]+?\*\*)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+        return (
+          <strong key={index} className="font-semibold text-white">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      return part;
+    });
+  };
 
-    const str = String(rawVerdict).trim();
-    let head = str;
-    let reason = fallbackText;
+  // Helper to sanitize leading asterisk combinations and render structured bullets
+  const renderFormattedReason = (rawReason) => {
+    if (!rawReason) return null;
 
-    const match = str.match(/(?:REASON|EXPLANATION):\s*([\s\S]*)/i);
-    if (match) {
-      reason = match[1].trim();
-      head = str.substring(0, match.index).trim();
-    } else if (str.includes("\n")) {
-      const parts = str.split("\n").map((p) => p.trim()).filter(Boolean);
-      head = parts[0];
-      if (parts.length > 1 && !reason) {
-        reason = parts.slice(1).join(" ");
+    const rawLines = String(rawReason).split(/\r?\n/);
+    const elements = [];
+    let currentBulletList = [];
+
+    const flushBulletList = () => {
+      if (currentBulletList.length > 0) {
+        const listItems = [...currentBulletList];
+        elements.push(
+          <ul key={`ul-${elements.length}`} className="space-y-2 my-2 pl-1">
+            {listItems.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2.5 text-xs text-[#d8f3f0] leading-relaxed">
+                <span className="text-[#e8a33d] font-bold text-sm leading-none mt-0.5">•</span>
+                <span className="flex-1">{renderInlineMarkdown(item)}</span>
+              </li>
+            ))}
+          </ul>
+        );
+        currentBulletList = [];
+      }
+    };
+
+    for (let i = 0; i < rawLines.length; i++) {
+      let line = rawLines[i].trim();
+      if (!line) {
+        flushBulletList();
+        continue;
+      }
+
+      // Check if line is a bullet point or has leading asterisk combinations
+      // Examples: '* **Title**:', '***Title***:', '**Title**:', '- **Title**:', '* Title'
+      const bulletMatch = line.match(/^([*•\-–]|\d+\.)\s*(.*)$/);
+      const isAsteriskCombo = /^(\*{2,3})\s*(.*)$/.test(line);
+
+      if (bulletMatch || isAsteriskCombo) {
+        let content = bulletMatch ? bulletMatch[2] : line;
+
+        // Clean leading double/triple asterisk combinations e.g., '***', '**'
+        content = content.replace(/^\*{3}([^*]+?)\*{3}/, "**$1**");
+        content = content.replace(/^\*{2,3}\s*/, "**");
+        content = content.trim();
+
+        currentBulletList.push(content);
+      } else {
+        flushBulletList();
+        // Regular paragraph (introductory or concluding sentence)
+        const cleanedPara = line.replace(/^\*{2,3}\s*/, "").trim();
+        elements.push(
+          <p key={`p-${elements.length}`} className="text-xs text-[#d8f3f0] leading-relaxed">
+            {renderInlineMarkdown(cleanedPara)}
+          </p>
+        );
       }
     }
 
-    const cleanHead = head.replace(/^VERDICT:\s*/i, "").trim().toUpperCase();
+    flushBulletList();
 
-    let label = "VERDICT: UNCLEAR";
-    let type = "unclear";
+    return <div className="space-y-2">{elements}</div>;
+  };
 
-    if (cleanHead.includes("CONTRADICT") || cleanHead.includes("INCONSISTENT")) {
-      label = "VERDICT: CONTRADICT";
+  // Parse Verdict string into clean badge label & explanation text
+  const parseVerdictInfo = (rawVerdict, fallbackText = "") => {
+    if (!rawVerdict) {
+      return { label: "VERDICT: INSUFFICIENT DATA", type: "unclear", reason: fallbackText };
+    }
+
+    const str = String(rawVerdict).trim();
+
+    // 1. Locate all VERDICT occurrences to extract candidate verdict line
+    const verdictMatches = [...str.matchAll(/VERDICT:\s*([^\n\r]+)/gi)];
+    let lastVerdictLine = "";
+    if (verdictMatches.length > 0) {
+      lastVerdictLine = verdictMatches[verdictMatches.length - 1][1].trim();
+    } else {
+      lastVerdictLine = str.split("\n")[0].trim();
+    }
+
+    const upperText = (lastVerdictLine + " " + str).toUpperCase();
+
+    // 2. Classify strictly into the 4 canonical categories:
+    // VERDICT: PARTIAL, VERDICT: CONFLICT DETECTED, VERDICT: CONCORDANT, VERDICT: INSUFFICIENT DATA
+    let label = "VERDICT: PARTIAL";
+    let type = "amber";
+
+    if (
+      upperText.includes("CONFLICT") ||
+      upperText.includes("CONTRADICT") ||
+      upperText.includes("INCONSISTENT") ||
+      upperText.includes("DISCORDANT")
+    ) {
+      label = "VERDICT: CONFLICT DETECTED";
       type = "red";
-    } else if (cleanHead.includes("PARTIAL")) {
-      label = cleanHead.includes("PARTIALLY CONSISTENT") ? "VERDICT: PARTIALLY CONSISTENT" : "VERDICT: PARTIAL";
+    } else if (
+      upperText.includes("PARTIAL") ||
+      upperText.includes("PARTIALLY")
+    ) {
+      label = "VERDICT: PARTIAL";
       type = "amber";
-    } else if (cleanHead.includes("CONSISTENT") || cleanHead.includes("AGREE") || cleanHead.includes("MATCH")) {
-      label = "VERDICT: CONSISTENT";
+    } else if (
+      upperText.includes("CONCORDANT") ||
+      upperText.includes("CONSISTENT") ||
+      upperText.includes("AGREE") ||
+      upperText.includes("MATCH")
+    ) {
+      label = "VERDICT: CONCORDANT";
       type = "green";
-    } else if (cleanHead) {
-      label = `VERDICT: ${cleanHead}`;
+    } else if (
+      upperText.includes("INSUFFICIENT") ||
+      upperText.includes("UNCLEAR") ||
+      upperText.includes("NO DATA") ||
+      upperText.includes("NOT ENOUGH")
+    ) {
+      label = "VERDICT: INSUFFICIENT DATA";
       type = "unclear";
+    } else {
+      // Fallback cleanly to VERDICT: PARTIAL
+      label = "VERDICT: PARTIAL";
+      type = "amber";
     }
 
-    if (!reason || reason === head || reason === `VERDICT: ${cleanHead}`) {
-      reason = fallbackText || str;
-      reason = reason.replace(/^VERDICT:[^\n]*\n?/i, "").replace(/^REASON:\s*/i, "").trim() || str;
+    // 3. Strip all verdict tags (e.g., 'VERDICT: PARTIAL -', 'VERDICT: CONFLICT', 'REASON:')
+    let cleanText = str;
+    cleanText = cleanText
+      .replace(/VERDICT:\s*[A-Za-z_\s]+(?:\s*-\s*|\s*:\s*|\n|$)/gi, "")
+      .replace(/(?:REASON|EXPLANATION):\s*/gi, "")
+      .trim();
+
+    if (!cleanText) {
+      cleanText = fallbackText || str;
     }
 
-    return { label, type, reason };
+    return { label, type, reason: cleanText };
   };
 
   // Format Verdict Badge
@@ -278,13 +520,6 @@ function Workspace() {
           {label}
         </span>
       );
-    } else if (type === "amber") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#e8a33d]/15 border border-[#e8a33d]/40 text-[#e8a33d] font-mono font-bold text-xs">
-          <AlertTriangle className="w-3.5 h-3.5" />
-          {label}
-        </span>
-      );
     } else if (type === "green") {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#2dd4ce]/15 border border-[#2dd4ce]/40 text-[#2dd4ce] font-mono font-bold text-xs">
@@ -292,9 +527,16 @@ function Workspace() {
           {label}
         </span>
       );
-    } else {
+    } else if (type === "unclear") {
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8fa89b]/15 border border-[#8fa89b]/40 text-[#8fa89b] font-mono font-bold text-xs">
+          <HelpCircle className="w-3.5 h-3.5" />
+          {label}
+        </span>
+      );
+    } else {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#e8a33d]/15 border border-[#e8a33d]/40 text-[#e8a33d] font-mono font-bold text-xs">
           <AlertTriangle className="w-3.5 h-3.5" />
           {label}
         </span>
@@ -302,20 +544,121 @@ function Workspace() {
     }
   };
 
+  // Centralized URL synchronization and navigation
+  const navigate = (path, replace = false) => {
+    if (typeof window !== "undefined") {
+      if (replace) {
+        window.history.replaceState({}, "", path);
+      } else {
+        window.history.pushState({}, "", path);
+      }
+    }
+    syncRouteFromPath(path);
+  };
+
+  const syncRouteFromPath = (path) => {
+    const rawPath = path || (typeof window !== "undefined" ? window.location.pathname : "/");
+    const cleanPath = (rawPath || "/").toLowerCase();
+
+    if (cleanPath.startsWith("/reset-password")) {
+      setScreen("reset-password");
+      return;
+    }
+
+    if (cleanPath.startsWith("/admin")) {
+      if (loading) return; // Wait for auth token validation
+      if (!isAuthenticated || !user?.is_admin) {
+        // Access Denied: Send back to login screen
+        if (typeof window !== "undefined") {
+          window.history.replaceState({}, "", "/");
+        }
+        setScreen("landing");
+        openAuth("login");
+        return;
+      }
+      setScreen("admin");
+      return;
+    }
+
+    if (cleanPath.startsWith("/dashboard")) {
+      if (loading) return;
+      if (!isAuthenticated) {
+        if (typeof window !== "undefined") {
+          window.history.replaceState({}, "", "/");
+        }
+        setScreen("landing");
+        openAuth("login");
+        return;
+      }
+      setScreen("dashboard");
+      return;
+    }
+
+    if (cleanPath.startsWith("/upload")) {
+      if (loading) return;
+      if (!isAuthenticated) {
+        if (typeof window !== "undefined") {
+          window.history.replaceState({}, "", "/");
+        }
+        setScreen("landing");
+        openAuth("login");
+        return;
+      }
+      setScreen("upload");
+      return;
+    }
+
+    setScreen("landing");
+  };
+
+  // Browser navigation popstate listener
+  useEffect(() => {
+    const handlePopState = () => {
+      syncRouteFromPath(window.location.pathname);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [isAuthenticated, user?.is_admin, loading]);
+
+  // Initial and reactive route synchronization
+  useEffect(() => {
+    if (!loading) {
+      syncRouteFromPath(window.location.pathname);
+    }
+  }, [loading, isAuthenticated, user?.is_admin]);
+
+  // Centralized Navigation Gate: If 0 papers, route to upload; otherwise dashboard
+  const navigateByPapers = async (overridePapers = null) => {
+    const list = overridePapers !== null ? overridePapers : await loadPapers();
+    if (!list || list.length === 0) {
+      navigate("/upload");
+    } else {
+      navigate("/dashboard");
+    }
+  };
+
   // Navigation handlers with Auth Gate
   const handleStartWorkflow = () => {
     if (isAuthenticated) {
-      setScreen("upload");
+      if (user?.is_admin) {
+        navigate("/admin");
+      } else {
+        navigateByPapers();
+      }
     } else {
-      openAuth("login", () => setScreen("upload"));
+      openAuth("login", () => navigateByPapers());
     }
   };
 
   const handleGoWorkspace = () => {
     if (isAuthenticated) {
-      setScreen("dashboard");
+      if (user?.is_admin) {
+        navigate("/admin");
+      } else {
+        navigateByPapers();
+      }
     } else {
-      openAuth("login", () => setScreen("dashboard"));
+      openAuth("login", () => navigateByPapers());
     }
   };
 
@@ -324,13 +667,23 @@ function Workspace() {
       <LoginModal
         isOpen={authModalOpen}
         defaultTab={authModalTab}
-        onClose={() => setAuthModalOpen(false)}
-        onSuccess={() => {
+        onClose={() => {
           setAuthModalOpen(false);
-          if (pendingAction) {
-            pendingAction();
+          setPendingAction(null);
+        }}
+        onSuccess={async (isAdminLogin, loggedInUser) => {
+          setAuthModalOpen(false);
+          const isAdm = Boolean(isAdminLogin ?? loggedInUser?.is_admin ?? user?.is_admin);
+          if (isAdm) {
+            navigate("/admin");
+            return;
+          }
+          const action = pendingAction;
+          setPendingAction(null);
+          if (action) {
+            await action();
           } else {
-            setScreen("dashboard");
+            navigate("/dashboard");
           }
         }}
       />
@@ -343,10 +696,42 @@ function Workspace() {
         />
       )}
 
+      {screen === "reset-password" && (
+        <ResetPasswordPage
+          onGoLogin={() => {
+            navigate("/");
+            openAuth("login");
+          }}
+        />
+      )}
+
+      {screen === "admin" && (
+        <AdminDashboard
+          onGoWorkspace={() => navigate("/dashboard")}
+          onLogout={() => {
+            logout();
+            navigate("/");
+          }}
+        />
+      )}
+
       {screen === "upload" && (
         <UploadPage
-          onContinue={() => setScreen("dashboard")}
-          onBack={() => setScreen("landing")}
+          onContinue={async (newDoc) => {
+            const updated = await loadPapers();
+            if (newDoc && newDoc.filename) {
+              openPdf(newDoc.filename, {
+                id: newDoc.paper_id || newDoc.id,
+                filename: newDoc.filename,
+                title: newDoc.title,
+              });
+            } else if (updated && updated.length > 0) {
+              const latest = updated[updated.length - 1];
+              openPdf(latest.filename, latest);
+            }
+            navigate("/dashboard");
+          }}
+          onBack={() => navigate("/")}
           onOpenAuth={(tab) => openAuth(tab)}
         />
       )}
@@ -359,7 +744,7 @@ function Workspace() {
               {/* Left: Brand & Return */}
               <div className="flex items-center gap-4">
                 <button
-                  onClick={() => setScreen("landing")}
+                  onClick={() => navigate("/")}
                   className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-[#8fa89b] hover:text-white border border-white/10 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-mono"
                   title="Return to Landing Page"
                 >
@@ -386,8 +771,18 @@ function Workspace() {
 
               {/* Center / Right: Telemetry & User Controls */}
               <div className="flex items-center gap-3">
+                {user?.is_admin && (
+                  <button
+                    onClick={() => navigate("/admin")}
+                    className="hidden sm:inline-flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 rounded-xl border border-[#2dd4ce]/40 text-[#2dd4ce] bg-[#2dd4ce]/10 hover:bg-[#2dd4ce]/20 transition cursor-pointer font-bold"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>ADMIN CONSOLE</span>
+                  </button>
+                )}
+
                 <button
-                  onClick={() => setScreen("upload")}
+                  onClick={() => navigate("/upload")}
                   className="hidden sm:inline-flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 rounded-xl border border-[#2dd4ce]/40 text-[#2dd4ce] bg-[#2dd4ce]/5 hover:bg-[#2dd4ce]/15 transition cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -416,7 +811,10 @@ function Workspace() {
                       <span className="truncate max-w-[130px]">{user?.full_name || user?.email}</span>
                     </span>
                     <button
-                      onClick={logout}
+                      onClick={() => {
+                        logout();
+                        navigate("/");
+                      }}
                       title="Sign Out"
                       className="p-1.5 rounded-lg bg-white/5 hover:bg-[#ff4757]/10 text-[#8fa89b] hover:text-[#ff4757] transition cursor-pointer"
                     >
@@ -447,27 +845,99 @@ function Workspace() {
             {/* Split-Screen Investigation View */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start max-w-[1780px] mx-auto w-full">
               
-              {/* Left Column: Interactive PDF Viewer (when selected) */}
-              {selectedPdfUrl && (
-                <div className="lg:col-span-6 h-[880px] sticky top-20">
+              {/* Left Column: Interactive PDF Viewer or Clinical Standby Placeholder */}
+              <div className="lg:col-span-6 h-[880px] sticky top-20">
+                {selectedPdfUrl ? (
                   <PdfViewer
                     fileUrl={selectedPdfUrl}
                     filename={selectedPaper?.filename || "source.pdf"}
+                    paperId={selectedPaper?.id || selectedPaper?.paper_id}
                     activeCitation={activeCitation}
                     onClose={() => {
                       setSelectedPdfUrl(null);
                       setActiveCitation(null);
                     }}
                   />
-                </div>
-              )}
+                ) : (
+                  <div className="h-full rounded-2xl bg-[#08131b]/95 border border-[#16323b] p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden backdrop-blur-xl">
+                    <div className="absolute -top-24 -left-24 w-72 h-72 bg-[#2dd4ce]/5 rounded-full blur-3xl pointer-events-none" />
+                    <div className="absolute -bottom-24 -right-24 w-72 h-72 bg-[#16323b]/30 rounded-full blur-3xl pointer-events-none" />
+
+                    {/* Top status header */}
+                    <div className="flex items-center justify-between border-b border-[#16323b] pb-4 relative z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#8fa89b]"></span>
+                        <span className="font-mono text-xs font-bold text-[#8fa89b] uppercase tracking-wider">
+                          CLINICAL EVIDENCE VIEWER • STANDBY
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-[#8fa89b] px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                        AIR-GAPPED READER
+                      </span>
+                    </div>
+
+                    {/* Center Callout */}
+                    <div className="my-auto text-center max-w-md mx-auto py-8 relative z-10">
+                      <div className="w-16 h-16 rounded-2xl bg-[#0b1e25] border border-[#2dd4ce]/30 mx-auto flex items-center justify-center text-[#2dd4ce] mb-5 shadow-lg shadow-[#2dd4ce]/10">
+                        <BookOpen className="w-8 h-8 stroke-[1.5]" />
+                      </div>
+                      <h3 className="text-lg font-bold text-white mb-2 tracking-tight">
+                        No Document Selected
+                      </h3>
+                      <p className="text-xs text-[#8fa89b] leading-relaxed mb-6">
+                        Select a verified trial paper below, or click{" "}
+                        <span className="text-[#2dd4ce] font-mono font-bold">"View Anchor →"</span>{" "}
+                        on any citation in the evidence chat to inspect original PDF pages with bounding box highlight overlays.
+                      </p>
+
+                      {papers.length > 0 ? (
+                        <div className="text-left bg-[#060b10] p-4 rounded-xl border border-[#16323b] space-y-2">
+                          <div className="flex items-center justify-between text-[11px] font-mono text-[#8fa89b] border-b border-white/5 pb-1.5">
+                            <span>AVAILABLE LITERATURE ({papers.length})</span>
+                            <span className="text-[#2dd4ce]">Click to load</span>
+                          </div>
+                          <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 no-scrollbar">
+                            {papers.map((p) => (
+                              <button
+                                key={p.id}
+                                onClick={() => openPdf(p.filename, p)}
+                                className="w-full text-left p-2.5 rounded-lg bg-[#0b1820] hover:bg-[#0e222d] border border-white/5 hover:border-[#2dd4ce]/40 transition flex items-center justify-between group cursor-pointer"
+                              >
+                                <div className="truncate pr-2">
+                                  <div className="text-xs font-medium text-white group-hover:text-[#2dd4ce] truncate" title={p.detected_title || p.title}>
+                                    {p.detected_title || p.title || p.filename}
+                                  </div>
+                                  <div className="text-[10px] font-mono text-[#8fa89b] truncate">
+                                    File: {p.filename}
+                                  </div>
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-[#8fa89b] group-hover:text-[#2dd4ce] shrink-0" />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setScreen("upload")}
+                          className="px-5 py-2.5 rounded-xl bg-[#2dd4ce] hover:bg-[#26b8b3] text-[#060b10] font-bold text-xs inline-flex items-center gap-2 shadow-lg shadow-[#2dd4ce]/20 transition cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Upload Biomedical Paper</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Bottom Telemetry */}
+                    <div className="border-t border-[#16323b] pt-3 flex items-center justify-between text-[10px] font-mono text-[#8fa89b] relative z-10">
+                      <span>PDF.JS HIGH-DPI CANVAS ENGINE</span>
+                      <span>NORMALIZED BBOX ANCHORING ACTIVE</span>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Right Column: LangGraph Audit Intelligence Panel */}
-              <div
-                className={`${
-                  selectedPdfUrl ? "lg:col-span-6" : "lg:col-span-12 max-w-5xl mx-auto"
-                } space-y-6 transition-all duration-300 w-full`}
-              >
+              <div className="lg:col-span-6 space-y-6 transition-all duration-300 w-full">
                 {/* SECTION 1: ADD LITERATURE (Fast Form) */}
                 <div className="rounded-2xl bg-[#08131b]/95 border border-[#16323b] p-5 shadow-xl">
                   <div className="flex items-center justify-between mb-4 border-b border-[#16323b] pb-3">
@@ -528,13 +998,25 @@ function Workspace() {
 
                     {uploadFeedback && (
                       <div
-                        className={`text-xs font-mono p-2.5 rounded-lg border ${
+                        className={`text-xs font-mono p-3 rounded-xl border flex items-start gap-2.5 ${
                           uploadFeedback.type === "success"
                             ? "bg-[#2dd4ce]/10 text-[#2dd4ce] border-[#2dd4ce]/30"
-                            : "bg-[#ff4757]/10 text-[#ff4757] border-[#ff4757]/30"
+                            : "bg-[#ff4757]/10 text-[#ff4757] border-[#ff4757]/40 shadow-lg shadow-[#ff4757]/10"
                         }`}
                       >
-                        {uploadFeedback.text}
+                        {uploadFeedback.type === "error" ? (
+                          <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-[#ff4757]" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[#2dd4ce]" />
+                        )}
+                        <div>
+                          {uploadFeedback.isRejection && (
+                            <div className="font-bold uppercase tracking-wider mb-0.5 text-[10.5px] text-[#ff4757]">
+                              BIOMEDICAL DOMAIN GATE REJECTION [HTTP 422]
+                            </div>
+                          )}
+                          <div className="text-white text-xs leading-relaxed">{uploadFeedback.text}</div>
+                        </div>
                       </div>
                     )}
 
@@ -573,40 +1055,63 @@ function Workspace() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1 no-scrollbar">
-                    {papers.map((paper, idx) => {
-                      const isSelected = selectedPaper && (selectedPaper.id === paper.id || selectedPaper.filename === paper.filename);
-                      return (
-                        <div
-                          key={paper.id || idx}
-                          onClick={() => paper.filename && openPdf(paper.filename, paper)}
-                          className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                            isSelected
-                              ? "bg-[#0c232c] border-[#2dd4ce] shadow-lg shadow-[#2dd4ce]/15"
-                              : "bg-[#060b10] hover:bg-[#081720] border-[#16323b] hover:border-[#2dd4ce]/40"
-                          }`}
+                    {papers.length === 0 ? (
+                      <div className="col-span-2 p-6 rounded-xl border border-dashed border-[#16323b] bg-[#060b10] text-center">
+                        <FileText className="w-8 h-8 text-[#8fa89b] mx-auto mb-2 opacity-50" />
+                        <p className="text-xs text-[#8fa89b] mb-3">
+                          No active verified papers in your workspace.
+                        </p>
+                        <button
+                          onClick={() => setScreen("upload")}
+                          className="px-3.5 py-1.5 rounded-lg bg-[#2dd4ce]/10 hover:bg-[#2dd4ce]/20 border border-[#2dd4ce]/30 text-[#2dd4ce] text-xs font-mono font-bold inline-flex items-center gap-1.5 cursor-pointer"
                         >
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-[10px] font-mono text-[#2dd4ce] font-bold">
-                                #{paper.id || paper.paper_id}
-                              </span>
-                              <span className="text-[10px] font-mono text-[#8fa89b]">PDF</span>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Upload Literature</span>
+                        </button>
+                      </div>
+                    ) : (
+                      papers.map((paper, idx) => {
+                        const isSelected = selectedPaper && (selectedPaper.id === paper.id || selectedPaper.filename === paper.filename);
+                        return (
+                          <div
+                            key={paper.id || idx}
+                            onClick={() => paper.filename && openPdf(paper.filename, paper)}
+                            className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                              isSelected
+                                ? "bg-[#0c232c] border-[#2dd4ce] shadow-lg shadow-[#2dd4ce]/15"
+                                : "bg-[#060b10] hover:bg-[#081720] border-[#16323b] hover:border-[#2dd4ce]/40"
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-mono text-[#2dd4ce] font-bold">
+                                  #{paper.id || paper.paper_id}
+                                </span>
+                                <span className="text-[9.5px] font-mono px-1.5 py-0.5 rounded bg-[#2dd4ce]/10 text-[#2dd4ce] border border-[#2dd4ce]/30">
+                                  VERIFIED
+                                </span>
+                              </div>
+                              <h3
+                                className="text-xs font-bold text-white line-clamp-2 leading-snug mb-1"
+                                title={paper.detected_title || paper.title || paper.filename}
+                              >
+                                {paper.detected_title || paper.title || paper.filename}
+                              </h3>
                             </div>
-                            <h3 className="text-xs font-bold text-white line-clamp-2 leading-snug">
-                              {paper.title || paper.filename}
-                            </h3>
-                          </div>
 
-                          <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10.5px] font-mono text-[#8fa89b]">
-                            <span className="truncate max-w-[130px]">{paper.filename}</span>
-                            <span className="text-[#2dd4ce] hover:underline flex items-center gap-0.5">
-                              <span>Inspect in Reader</span>
-                              <ChevronRight className="w-3 h-3" />
-                            </span>
+                            <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10.5px] font-mono text-[#8fa89b]">
+                              <span className="truncate max-w-[130px]" title={paper.filename}>
+                                📄 {paper.filename}
+                              </span>
+                              <span className="text-[#2dd4ce] hover:underline flex items-center gap-0.5">
+                                <span>Inspect in Reader</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })
+                    )}
                   </div>
                 </div>
 
@@ -624,10 +1129,26 @@ function Workspace() {
                     activeSessionId={activeSessionId}
                     sessionMessages={sessionMessages}
                     onSessionCreated={(newId) => setActiveSessionId(newId)}
-                    onOpenPdf={(fn, c) => openPdf(fn, null, c)}
+                    onSelectSource={(c) => {
+                      const fn = c?.filename || c?.doc_id || selectedPaper?.filename;
+                      openPdf(fn, null, c);
+                    }}
+                    onOpenPdf={(filename, c) => {
+                      const fn = filename || c?.filename || c?.doc_id || selectedPaper?.filename;
+                      openPdf(fn, null, c);
+                    }}
+                    onSelectCitation={(c) => {
+                      const fn = c?.filename || c?.doc_id || selectedPaper?.filename;
+                      openPdf(fn, null, c);
+                    }}
+                    onOpenAuth={(tab) => openAuth(tab)}
                     papers={papers}
                     selectedPaper={selectedPaper}
-                    onSelectPaper={(paper) => paper.filename && openPdf(paper.filename, paper)}
+                    onSelectPaper={(p) => {
+                      if (p && p.filename) {
+                        openPdf(p.filename, p);
+                      }
+                    }}
                   />
                 </div>
 
@@ -653,22 +1174,70 @@ function Workspace() {
                     Detect empirical conflicts, dosage variance, and divergent cohort outcomes across all indexed literature.
                   </p>
 
-                  <form onSubmit={handleCompare} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={compareQuery}
-                      onChange={(e) => setCompareQuery(e.target.value)}
-                      placeholder="e.g. effect of SGLT2 inhibitor on body weight or HbA1c..."
-                      className="flex-1 px-4 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#e8a33d] focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      disabled={comparing || !compareQuery.trim()}
-                      className="px-5 py-2.5 rounded-xl bg-[#e8a33d] hover:bg-[#d8932d] text-[#060b10] font-bold text-xs flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-md shadow-[#e8a33d]/20"
-                    >
-                      {comparing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                      <span>Cross-Examine</span>
-                    </button>
+                  <form onSubmit={handleCompare} className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10.5px] font-mono text-[#8fa89b] uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#e8a33d]"></span>
+                          Paper 1 (Reference Trial)
+                        </label>
+                        <select
+                          value={comparePaper1Id || (papers.length > 0 ? (papers[0].id || papers[0].paper_id) : "")}
+                          onChange={(e) => setComparePaper1Id(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-[#060b10] border border-[#16323b] text-[#d8f3f0] text-xs focus:border-[#e8a33d] focus:outline-none"
+                        >
+                          {papers.map((p) => {
+                            const title = p.detected_title || p.title || p.filename;
+                            const truncatedTitle = title.length > 38 ? `${title.slice(0, 35)}...` : title;
+                            return (
+                              <option key={p.id || p.paper_id} value={p.id || p.paper_id} title={`${title} (${p.filename})`}>
+                                #{p.id || p.paper_id}: {truncatedTitle}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10.5px] font-mono text-[#8fa89b] uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#2dd4ce]"></span>
+                          Paper 2 (Comparator Trial)
+                        </label>
+                        <select
+                          value={comparePaper2Id || (papers.length > 1 ? (papers[1].id || papers[1].paper_id) : (papers[0]?.id || papers[0]?.paper_id || ""))}
+                          onChange={(e) => setComparePaper2Id(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-[#060b10] border border-[#16323b] text-[#d8f3f0] text-xs focus:border-[#e8a33d] focus:outline-none"
+                        >
+                          {papers.map((p) => {
+                            const title = p.detected_title || p.title || p.filename;
+                            const truncatedTitle = title.length > 38 ? `${title.slice(0, 35)}...` : title;
+                            return (
+                              <option key={p.id || p.paper_id} value={p.id || p.paper_id} title={`${title} (${p.filename})`}>
+                                #{p.id || p.paper_id}: {truncatedTitle}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={compareQuery}
+                        onChange={(e) => setCompareQuery(e.target.value)}
+                        placeholder="e.g. effect of SGLT2 inhibitor on body weight or HbA1c..."
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#e8a33d] focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={comparing || !compareQuery.trim()}
+                        className="px-5 py-2.5 rounded-xl bg-[#e8a33d] hover:bg-[#d8932d] text-[#060b10] font-bold text-xs flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-md shadow-[#e8a33d]/20 shrink-0"
+                      >
+                        {comparing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                        <span>Cross-Examine</span>
+                      </button>
+                    </div>
                   </form>
 
                   {compareResult && (() => {
@@ -679,9 +1248,9 @@ function Workspace() {
                           <span className="font-mono text-xs text-[#8fa89b] uppercase">Arbitration Verdict:</span>
                           {renderVerdictBadge(compareResult.verdict, compareResult.analysis)}
                         </div>
-                        <p className="text-xs text-[#d8f3f0] leading-relaxed">
-                          {parsed.reason}
-                        </p>
+                        <div className="text-xs text-[#d8f3f0] leading-relaxed">
+                          {renderFormattedReason(parsed.reason)}
+                        </div>
                       </div>
                     );
                   })()}
@@ -707,7 +1276,7 @@ function Workspace() {
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                       <div className="sm:col-span-5">
                         <select
-                          value={integrityPaperId}
+                          value={integrityPaperId || selectedPaper?.id || ""}
                           onChange={(e) => setIntegrityPaperId(e.target.value)}
                           className="w-full px-3 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs focus:border-[#2dd4ce] focus:outline-none"
                         >
@@ -747,9 +1316,9 @@ function Workspace() {
                           <span className="font-mono text-xs text-[#8fa89b] uppercase">Integrity Verdict:</span>
                           {renderVerdictBadge(integrityResult.verdict, integrityResult.explanation)}
                         </div>
-                        <p className="text-xs text-[#d8f3f0] leading-relaxed">
-                          {parsed.reason}
-                        </p>
+                        <div className="text-xs text-[#d8f3f0] leading-relaxed">
+                          {renderFormattedReason(parsed.reason)}
+                        </div>
                       </div>
                     );
                   })()}

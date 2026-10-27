@@ -102,11 +102,19 @@ export default function UploadPage({ onContinue, onBack, onOpenAuth }) {
     try {
       const result = await uploadPaper(file, title.trim());
       setUploadedResult(result);
-      fetchPapers().then((p) => setExistingPapers(p));
+      const papers = await fetchPapers();
+      setExistingPapers(papers);
+
+      // Transition to main workspace
+      setTimeout(() => {
+        if (onContinue) {
+          onContinue(result);
+        }
+      }, 1200);
     } catch (err) {
       if (err.statusCode === 422 || err.isRejected) {
-        setErrorMessage(err.message || "Document rejected: Not a biomedical research paper.");
-        setRejectDetails(err.details || "Non-biomedical content detected.");
+        setErrorMessage(err.message || "Document rejected: Not a recognized biomedical or clinical trial paper. Please upload clinical research literature.");
+        setRejectDetails(err.details || "");
       } else {
         setErrorMessage(err.message || "Document ingestion failed.");
       }
@@ -349,8 +357,13 @@ export default function UploadPage({ onContinue, onBack, onOpenAuth }) {
                 </span>
               </div>
               <p className="text-xs text-white">
-                Title: <strong className="text-[#2dd4ce]">{uploadedResult.title}</strong>
+                Extracted Title: <strong className="text-[#2dd4ce]">{uploadedResult.detected_title || uploadedResult.title}</strong>
               </p>
+              {uploadedResult.filename && (
+                <p className="text-[11px] font-mono text-[#8fa89b]">
+                  Source File: {uploadedResult.filename}
+                </p>
+              )}
               <button
                 onClick={onContinue}
                 className="w-full py-2.5 rounded-lg bg-[#2dd4ce] hover:bg-[#26b8b3] text-[#060b10] font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md shadow-[#2dd4ce]/20"
@@ -372,10 +385,13 @@ export default function UploadPage({ onContinue, onBack, onOpenAuth }) {
               {existingPapers.map((p) => (
                 <span
                   key={p.id}
+                  title={`${p.detected_title || p.title || p.filename} (${p.filename})`}
                   className="px-3 py-1.5 rounded-lg bg-[#08131b] border border-[#16323b] text-xs font-mono text-[#adc2b6] flex items-center gap-1.5"
                 >
                   <span className="text-[#2dd4ce]">✓</span>
-                  <span className="truncate max-w-[220px]">{p.filename}</span>
+                  <span className="truncate max-w-[280px]">
+                    {p.detected_title || p.title || p.filename} [{p.filename}]
+                  </span>
                 </span>
               ))}
             </div>

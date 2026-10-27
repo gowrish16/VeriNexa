@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { Lock, Mail, Key, User, X, Shield, Sparkles, AlertCircle, Loader2 } from "lucide-react";
+import { Lock, Mail, Key, User, X, Shield, AlertCircle, CheckCircle2, Loader2, ArrowLeft, ExternalLink } from "lucide-react";
 import { useAuth } from "./AuthContext";
 
 function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
   const { login, register } = useAuth();
-  const [tab, setTab] = useState(defaultTab);
+  const [tab, setTab] = useState(defaultTab); // "login" | "register" | "forgot"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  const [devResetUrl, setDevResetUrl] = useState(null);
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -16,17 +18,24 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
+    setDevResetUrl(null);
     setLoading(true);
 
     try {
       if (tab === "login") {
         const res = await login(email, password);
         if (!res.success) {
-          setError(res.error || "Failed to sign in. Please verify your credentials.");
+          setError(res.error || "Invalid email or password");
           setLoading(false);
           return;
         }
-      } else {
+        setLoading(false);
+        if (onSuccess) {
+          onSuccess(res.is_admin, res.user);
+        }
+        onClose();
+      } else if (tab === "register") {
         if (!email.trim() || !password.trim()) {
           setError("Email and password are required.");
           setLoading(false);
@@ -38,11 +47,27 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
           setLoading(false);
           return;
         }
+        setLoading(false);
+        if (onSuccess) {
+          onSuccess(res.is_admin, res.user);
+        }
+        onClose();
+      } else if (tab === "forgot") {
+        const res = await fetch("http://127.0.0.1:8000/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Unable to send recovery email");
+        }
+        setSuccessMsg(data.message || "A secure password recovery link has been dispatched to your email address.");
+        if (data.reset_link) {
+          setDevResetUrl(data.reset_link);
+        }
+        setLoading(false);
       }
-
-      setLoading(false);
-      if (onSuccess) onSuccess();
-      onClose();
     } catch (err) {
       setError(err.message || "An unexpected error occurred.");
       setLoading(false);
@@ -77,42 +102,50 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0e272b] border border-[#2dd4ce]/30 mb-2">
             <Shield className="w-3 h-3 text-[#2dd4ce]" />
             <span className="text-[10px] font-mono tracking-widest text-[#2dd4ce] uppercase font-bold">
-              VERINEXA SECURE RESEARCH ACCESS
+              {tab === "forgot" ? "PASSWORD RECOVERY" : "VERINEXA SECURE ACCESS"}
             </span>
           </div>
           <h2 className="font-display text-2xl font-bold text-white tracking-tight">
-            {tab === "login" ? "Authenticate to VeriNexa" : "Create Clinical Account"}
+            {tab === "login"
+              ? "Sign In"
+              : tab === "register"
+              ? "Create Account"
+              : "Reset Password"}
           </h2>
           <p className="text-xs text-[#8fa89b] mt-1 leading-relaxed">
-            Air-gapped biomedical literature verification & cross-paper integrity audit suite.
+            {tab === "forgot"
+              ? "Enter your registered email address and we'll dispatch a secure recovery link."
+              : "Air-gapped biomedical literature verification and cross-paper integrity audit suite."}
           </p>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-[#16323b] mb-6">
-          <button
-            type="button"
-            onClick={() => { setTab("login"); setError(""); }}
-            className={`pb-2.5 text-xs font-mono uppercase tracking-wider transition-all flex-1 text-center cursor-pointer ${
-              tab === "login"
-                ? "border-b-2 border-[#2dd4ce] font-bold text-[#2dd4ce]"
-                : "text-[#8fa89b] hover:text-white"
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => { setTab("register"); setError(""); }}
-            className={`pb-2.5 text-xs font-mono uppercase tracking-wider transition-all flex-1 text-center cursor-pointer ${
-              tab === "register"
-                ? "border-b-2 border-[#2dd4ce] font-bold text-[#2dd4ce]"
-                : "text-[#8fa89b] hover:text-white"
-            }`}
-          >
-            Register
-          </button>
-        </div>
+        {/* Navigation Tabs (Only when not in forgot password mode) */}
+        {tab !== "forgot" && (
+          <div className="flex border-b border-[#16323b] mb-6">
+            <button
+              type="button"
+              onClick={() => { setTab("login"); setError(""); setSuccessMsg(""); }}
+              className={`pb-2.5 text-xs font-mono uppercase tracking-wider transition-all flex-1 text-center cursor-pointer ${
+                tab === "login"
+                  ? "border-b-2 border-[#2dd4ce] font-bold text-[#2dd4ce]"
+                  : "text-[#8fa89b] hover:text-white"
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTab("register"); setError(""); setSuccessMsg(""); }}
+              className={`pb-2.5 text-xs font-mono uppercase tracking-wider transition-all flex-1 text-center cursor-pointer ${
+                tab === "register"
+                  ? "border-b-2 border-[#2dd4ce] font-bold text-[#2dd4ce]"
+                  : "text-[#8fa89b] hover:text-white"
+              }`}
+            >
+              Register
+            </button>
+          </div>
+        )}
 
         {/* Error Alert */}
         {error && (
@@ -122,19 +155,39 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
           </div>
         )}
 
-        {/* Form */}
+        {/* Success Alert */}
+        {successMsg && (
+          <div className="mb-4 rounded-xl p-3.5 text-xs border border-[#2dd4ce]/30 bg-[#2dd4ce]/10 text-[#d8f3f0] space-y-2 font-mono text-left">
+            <div className="flex items-center gap-2 text-[#2dd4ce] font-bold">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>Recovery Link Dispatched</span>
+            </div>
+            <p className="text-[11.5px] leading-relaxed text-[#adc2b6]">{successMsg}</p>
+            {devResetUrl && (
+              <a
+                href={devResetUrl}
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2dd4ce]/20 hover:bg-[#2dd4ce]/30 text-[#2dd4ce] text-xs font-mono font-semibold transition"
+              >
+                <span>Open Password Reset Page</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Unified Form */}
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 text-left">
           {tab === "register" && (
             <div>
               <label className="block mb-1 text-[11px] font-mono uppercase text-[#8fa89b]">
-                Full Name / Researcher Title
+                Full Name
               </label>
               <div className="relative">
                 <input
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Dr. Jane Doe"
+                  placeholder="Jane Doe"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#2dd4ce] focus:outline-none transition"
                 />
                 <User className="w-4 h-4 text-[#8fa89b] absolute left-3 top-3" />
@@ -144,7 +197,7 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
 
           <div>
             <label className="block mb-1 text-[11px] font-mono uppercase text-[#8fa89b]">
-              Institutional / Research Email
+              Email Address
             </label>
             <div className="relative">
               <input
@@ -152,29 +205,49 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="researcher@lab.org"
+                placeholder="name@example.com"
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#2dd4ce] focus:outline-none transition"
               />
               <Mail className="w-4 h-4 text-[#8fa89b] absolute left-3 top-3" />
             </div>
           </div>
 
-          <div>
-            <label className="block mb-1 text-[11px] font-mono uppercase text-[#8fa89b]">
-              Access Password
-            </label>
-            <div className="relative">
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#2dd4ce] focus:outline-none transition"
-              />
-              <Key className="w-4 h-4 text-[#8fa89b] absolute left-3 top-3" />
+          {tab !== "forgot" && (
+            <div>
+              <label className="block mb-1 text-[11px] font-mono uppercase text-[#8fa89b]">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#060b10] border border-[#16323b] text-white text-xs placeholder:text-[#4d6359] focus:border-[#2dd4ce] focus:outline-none transition"
+                />
+                <Key className="w-4 h-4 text-[#8fa89b] absolute left-3 top-3" />
+              </div>
+
+              {/* Forgot password link directly under password input */}
+              {tab === "login" && (
+                <div className="flex justify-end mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTab("forgot");
+                      setError("");
+                      setSuccessMsg("");
+                      setDevResetUrl(null);
+                    }}
+                    className="text-[11.5px] font-mono text-[#2dd4ce] hover:underline cursor-pointer transition-colors"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <button
             type="submit"
@@ -184,30 +257,51 @@ function LoginModal({ isOpen, onClose, defaultTab = "login", onSuccess }) {
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Authenticating with VeriNexa Engine...</span>
+                <span>
+                  {tab === "forgot" ? "Dispatching Recovery Link..." : "Verifying Credentials..."}
+                </span>
               </>
             ) : tab === "login" ? (
-              <span>ENTER WORKSPACE →</span>
-            ) : (
+              <span>SIGN IN →</span>
+            ) : tab === "register" ? (
               <span>CREATE ACCOUNT & LAUNCH →</span>
+            ) : (
+              <span>SEND RECOVERY LINK →</span>
             )}
           </button>
         </form>
 
+        {/* Bottom Switcher */}
         <div className="mt-6 pt-4 border-t border-[#16323b] text-center">
-          <p className="text-xs text-[#8fa89b]">
-            {tab === "login" ? "New clinical researcher? " : "Already registered? "}
+          {tab === "forgot" ? (
             <button
               type="button"
               onClick={() => {
-                setTab(tab === "login" ? "register" : "login");
+                setTab("login");
                 setError("");
+                setSuccessMsg("");
               }}
-              className="text-[#2dd4ce] font-semibold hover:underline cursor-pointer ml-1"
+              className="inline-flex items-center gap-1.5 text-xs text-[#2dd4ce] font-semibold hover:underline cursor-pointer"
             >
-              {tab === "login" ? "Create an account" : "Sign in instead"}
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Sign In</span>
             </button>
-          </p>
+          ) : (
+            <p className="text-xs text-[#8fa89b]">
+              {tab === "login" ? "Don't have an account? " : "Already registered? "}
+              <button
+                type="button"
+                onClick={() => {
+                  setTab(tab === "login" ? "register" : "login");
+                  setError("");
+                  setSuccessMsg("");
+                }}
+                className="text-[#2dd4ce] font-semibold hover:underline cursor-pointer ml-1"
+              >
+                {tab === "login" ? "Create an account" : "Sign in instead"}
+              </button>
+            </p>
+          )}
         </div>
       </div>
     </div>

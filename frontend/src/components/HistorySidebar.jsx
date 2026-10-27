@@ -1,19 +1,26 @@
 import React, { useState, useEffect } from "react";
 import { Plus, History, ChevronLeft, ChevronRight, MessageSquare, Clock, Sparkles } from "lucide-react";
 import { fetchAuditHistory } from "../services/api";
+import { useAuth } from "../AuthContext";
 
 export default function HistorySidebar({ activeSessionId, onSelectSession, onNewSession }) {
+  const { user, isAuthenticated } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const loadHistory = async () => {
+    if (!isAuthenticated) {
+      setSessions([]);
+      return;
+    }
     setLoading(true);
     try {
       const data = await fetchAuditHistory();
       setSessions(data || []);
     } catch (err) {
       console.warn("Could not load audit history:", err);
+      setSessions([]);
     } finally {
       setLoading(false);
     }
@@ -21,7 +28,7 @@ export default function HistorySidebar({ activeSessionId, onSelectSession, onNew
 
   useEffect(() => {
     loadHistory();
-  }, [activeSessionId]);
+  }, [activeSessionId, isAuthenticated, user?.id]);
 
   if (isCollapsed) {
     return (

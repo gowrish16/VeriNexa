@@ -1,7 +1,7 @@
 import requests
 import json
 
-def query_ollama(prompt, model="llama3.1:8b"):
+def query_ollama(prompt, model="llama3.2:1b"):
     response = requests.post(
         "http://localhost:11434/api/generate",
         json={

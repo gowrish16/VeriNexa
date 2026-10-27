@@ -1,57 +1,43 @@
 from typing import TypedDict, Dict, List, Tuple, Optional
 from langgraph.graph import StateGraph, START, END
-from conflict_engine import retrieve_claims_per_paper, query_ollama, save_verdict_to_db
+from conflict_engine import retrieve_claims_per_paper, query_ollama, save_verdict_to_db, compare_claims
+from config import DEFAULT_MODEL
 
 
 class ConflictState(TypedDict):
     query: str
+    user_id: Optional[int]
+    paper_ids: Optional[List[int]]
     grouped_chunks: Dict[int, List[Tuple[int, str, float]]]
+    paper_meta: Optional[Dict[int, dict]]
     verdict: str
     saved_id: Optional[int]
 
 
 def retrieve_node(state: ConflictState) -> dict:
-    grouped = retrieve_claims_per_paper(state["query"])
-    return {"grouped_chunks": grouped}
+    grouped, paper_meta = retrieve_claims_per_paper(
+        query=state["query"],
+        user_id=state.get("user_id"),
+        paper_ids=state.get("paper_ids")
+    )
+    return {"grouped_chunks": grouped, "paper_meta": paper_meta}
 
 
 def compare_node(state: ConflictState) -> dict:
-    grouped_chunks = state["grouped_chunks"]
-    query = state["query"]
+    grouped_chunks = state.get("grouped_chunks", {})
+    paper_meta = state.get("paper_meta", {})
+    query = state.get("query", "")
 
     if len(grouped_chunks) < 2:
-        return {"verdict": "UNCLEAR\nNot enough papers with relevant content to compare."}
+        return {"verdict": "VERDICT: UNCLEAR - Not enough papers with relevant content to compare. At least 2 indexed papers are required."}
 
-    paper_ids = list(grouped_chunks.keys())
-    paper_a_id, paper_b_id = paper_ids[0], paper_ids[1]
-
-    paper_a_text = "\n".join([text for _, text, _ in grouped_chunks[paper_a_id]])
-    paper_b_text = "\n".join([text for _, text, _ in grouped_chunks[paper_b_id]])
-
-    prompt = f"""You are analyzing two biomedical research paper excerpts to check if they agree or disagree about a specific topic.
-
-Topic: {query}
-
---- Excerpt from Paper A (id={paper_a_id}) ---
-{paper_a_text}
-
---- Excerpt from Paper B (id={paper_b_id}) ---
-{paper_b_text}
-
-Based only on the text above, answer in this exact format:
-VERDICT: [AGREE / PARTIAL / CONTRADICT / UNCLEAR]
-REASON: [one or two sentences explaining why, citing specific numbers if mentioned]
-
-Use PARTIAL when the papers agree on the overall outcome (e.g., both report weight loss) but disagree on a specific detail such as mechanism, magnitude, or population studied.
-"""
-
-    result = query_ollama(prompt)
+    result = compare_claims(query, grouped_chunks, paper_meta)
     return {"verdict": result}
 
 
 def adversarial_critic_node(state: ConflictState) -> dict:
     verdict_text = state.get("verdict", "")
-    if "CONTRADICT" not in verdict_text.upper():
+    if "CONFLICT" not in verdict_text.upper() and "CONTRADICT" not in verdict_text.upper():
         return {}
 
     grouped_chunks = state.get("grouped_chunks", {})
@@ -61,13 +47,21 @@ def adversarial_critic_node(state: ConflictState) -> dict:
         return {}
 
     paper_a_id, paper_b_id = paper_ids[0], paper_ids[1]
-    paper_a_text = "\n".join([text for _, text, _ in grouped_chunks[paper_a_id]])
-    paper_b_text = "\n".join([text for _, text, _ in grouped_chunks[paper_b_id]])
+    def _extract_chunk_text(c):
+        if isinstance(c, str):
+            return c
+        for elem in c:
+            if isinstance(elem, str):
+                return elem
+        return str(c)
+
+    paper_a_text = "\n".join([_extract_chunk_text(item) for item in grouped_chunks[paper_a_id]])
+    paper_b_text = "\n".join([_extract_chunk_text(item) for item in grouped_chunks[paper_b_id]])
 
     prompt = f"""You are a senior clinical trials adversarial critic evaluating potential false positive contradiction alarms.
-The primary auditor flagged a CONTRADICTION between two biomedical papers on the topic: {query}.
+The primary auditor flagged a CONFLICT between two biomedical papers on the topic: {query}.
 
-Primary Auditor Verdict:
+Primary Auditor Assessment:
 {verdict_text}
 
 --- Paper A Excerpt (id={paper_a_id}) ---
@@ -76,21 +70,23 @@ Primary Auditor Verdict:
 --- Paper B Excerpt (id={paper_b_id}) ---
 {paper_b_text}
 
-Evaluate whether this apparent contradiction is a GENUINE conflict on primary endpoints, or if it is EXPLAINABLE by confounding trial design factors such as:
+Evaluate whether this apparent conflict is a GENUINE conflict on primary endpoints, or if it is EXPLAINABLE by confounding trial design factors such as:
 1. Dosage or regimen differences
 2. Patient cohort demographics (e.g., Type 1 vs Type 2 diabetes, baseline HbA1c, baseline renal function)
 3. Trial duration or background co-medications (e.g., insulin combination vs monotherapy)
 
 Respond in this exact format:
 EXPLAINABLE: [YES or NO]
-REASONING: [Brief 1-2 sentence explanation of confounding factors if YES, or confirmation of direct contradiction if NO]
-FINAL VERDICT: [PARTIALLY CONSISTENT or CONTRADICT]
+REASONING: [Brief 1-2 sentence explanation of confounding factors if YES, or confirmation of direct conflict if NO]
+FINAL VERDICT: [PARTIALLY CONSISTENT or CONFLICT]
 """
 
     try:
-        critic_response = query_ollama(prompt, model="llama3.1:8b")
+        critic_response = query_ollama(prompt, model=DEFAULT_MODEL, timeout=60.0, num_predict=150)
         if "EXPLAINABLE: YES" in critic_response.upper() or "PARTIALLY CONSISTENT" in critic_response.upper():
-            new_verdict = f"VERDICT: PARTIALLY CONSISTENT\nREASON: [Adversarial Review] Apparent contradiction is explainable by confounding trial design factors.\n{critic_response.strip()}"
+            import re
+            clean_bullets = re.sub(r"\n*VERDICT:.*", "", verdict_text, flags=re.DOTALL).strip()
+            new_verdict = f"{clean_bullets}\n\nVERDICT: PARTIALLY CONSISTENT - Apparent conflict is explainable by confounding trial design factors."
             return {"verdict": new_verdict}
     except Exception as e:
         print(f"[Warning] Adversarial critic pass failed: {e}")
@@ -99,7 +95,12 @@ FINAL VERDICT: [PARTIALLY CONSISTENT or CONTRADICT]
 
 
 def save_node(state: ConflictState) -> dict:
-    saved_id = save_verdict_to_db(state["grouped_chunks"], state["query"], state["verdict"])
+    saved_id = save_verdict_to_db(
+        state["grouped_chunks"],
+        state["query"],
+        state["verdict"],
+        user_id=state.get("user_id")
+    )
     return {"saved_id": saved_id}
 
 
@@ -109,16 +110,22 @@ def skip_save_node(state: ConflictState) -> dict:
 
 def route_after_compare(state: ConflictState) -> str:
     verdict_text = state.get("verdict", "").upper()
-    if "CONTRADICT" in verdict_text:
+    if "CONFLICT" in verdict_text or "CONTRADICT" in verdict_text:
         return "adversarial_critic"
-    elif "PARTIAL" in verdict_text:
+    elif "PARTIAL" in verdict_text or "CONSISTENT" in verdict_text:
         return "save"
     return "skip"
 
 
 def route_after_critic(state: ConflictState) -> str:
     verdict_text = state.get("verdict", "").upper()
-    if "PARTIAL" in verdict_text or "CONTRADICT" in verdict_text or "PARTIALLY CONSISTENT" in verdict_text:
+    if (
+        "PARTIAL" in verdict_text
+        or "CONFLICT" in verdict_text
+        or "CONTRADICT" in verdict_text
+        or "PARTIALLY CONSISTENT" in verdict_text
+        or "CONSISTENT" in verdict_text
+    ):
         return "save"
     return "skip"
 
